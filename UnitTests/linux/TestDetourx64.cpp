@@ -2,20 +2,20 @@
 
 #include <Catch.hpp>
 
-#include "polyhook2/Detour/x64Detour.hpp"
-#include "polyhook2/ZydisDisassembler.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
+#include "sigilhook/ZydisDisassembler.hpp"
 
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
 #include "../TestUtils.hpp"
 
 EffectTracker effects;
 
 NOINLINE void hookMe1() {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	std::cout << "hookMe1 called" << std::endl;
 	volatile int var = 1;
 	volatile int var2 = 0;
@@ -28,18 +28,18 @@ NOINLINE void hookMe1() {
 	REQUIRE(var2 == 40);
 }
 
-PLH_TEST_DETOUR_CALLBACK(hookMe1, {
+SIGILHOOK_TEST_DETOUR_CALLBACK(hookMe1, {
 	std::cout << "Hook 1 Called! Trampoline: 0x" << std::hex << hookMe1_trmp << std::endl;
 });
 
 NOINLINE void hookMe2() {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	for (int i = 0; i < 10; i++) {
 		printf("%d\n", i);
 	}
 }
 
-PLH_TEST_DETOUR_CALLBACK(hookMe2, {
+SIGILHOOK_TEST_DETOUR_CALLBACK(hookMe2, {
 	std::cout << "Hook 2 Called!" << std::endl;
 });
 
@@ -72,28 +72,28 @@ unsigned char hookMe5[] = {
 
 uint64_t nullTramp = 0;
 NOINLINE void h_nullstub() {
-	PLH::StackCanary canary;
-	PLH_STOP_OPTIMIZATIONS();
+	SIGILHOOK::StackCanary canary;
+	SIGILHOOK_STOP_OPTIMIZATIONS();
 }
 
-PLH_TEST_DETOUR_CALLBACK(malloc);
+SIGILHOOK_TEST_DETOUR_CALLBACK(malloc);
 
 TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
-	PLH::test::registerTestLogger();
+	SIGILHOOK::test::registerTestLogger();
 
 	SECTION("Normal function (VALLOC2)") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe1);
-		detour.setDetourScheme(PLH::x64Detour::VALLOC2);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe1);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::VALLOC2);
 		// VALLOC2 is not supported on linux so we expect hooking & unhooking to fail
 		REQUIRE(detour.hook() == false);
 		REQUIRE(detour.unHook() == false);
 	}
 
 	SECTION("Normal function (INPLACE)") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe1);
-		detour.setDetourScheme(PLH::x64Detour::INPLACE);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe1);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::INPLACE);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -103,9 +103,9 @@ TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
 	}
 
 	SECTION("Normal function (CODE_CAVE)") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe1);
-		detour.setDetourScheme(PLH::x64Detour::CODE_CAVE);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe1);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::CODE_CAVE);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -115,9 +115,9 @@ TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
 	}
 
 	SECTION("Normal function (INPLACE_SHORT)") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe1);
-		detour.setDetourScheme(PLH::x64Detour::INPLACE_SHORT);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe1);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::INPLACE_SHORT);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -127,8 +127,8 @@ TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
 	}
 
 	SECTION("Normal function rehook") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe1);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe1);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -140,8 +140,8 @@ TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
 	}
 
 	SECTION("Loop function") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(hookMe2);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(hookMe2);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -151,32 +151,32 @@ TEST_CASE("Testing 64 detours", "[x64Detour],[ADetour]") {
 	}
 
 	SECTION("Jmp into prol w/src in range") {
-		PLH::StackCanary canary;
-		PLH::x64Detour detour((uint64_t)&hookMe3, (uint64_t)&h_nullstub, &nullTramp);
-		detour.setDetourScheme(PLH::x64Detour::ALL);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour detour((uint64_t)&hookMe3, (uint64_t)&h_nullstub, &nullTramp);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::ALL);
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Jmp into prol w/src out of range") {
-		PLH::StackCanary canary;
-		PLH::x64Detour detour((uint64_t)&hookMe4, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour detour((uint64_t)&hookMe4, (uint64_t)&h_nullstub, &nullTramp);
 
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Call instruction early in prologue") {
-		PLH::StackCanary canary;
-		PLH::x64Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
 
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Hook malloc") {
-		PLH::StackCanary canary;
-		PLH::x64Detour PLH_TEST_DETOUR(malloc);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x64Detour SIGILHOOK_TEST_DETOUR(malloc);
 		effects.PushEffect(); // catch does some allocations, push effect first
 							  // so peak works
 		bool result = detour.hook();

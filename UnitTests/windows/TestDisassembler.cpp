@@ -2,9 +2,9 @@
 // Created by steve on 3/22/17.
 //
 #include "Catch.hpp"
-#include "polyhook2/ZydisDisassembler.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/MemAccessor.hpp"
+#include "sigilhook/ZydisDisassembler.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/MemAccessor.hpp"
 
 #include <iostream>
 #include <vector>
@@ -110,12 +110,12 @@ uint8_t randByte() {
 }
 
 TEST_CASE("Test Instruction UUID generator", "[Instruction],[UID]") {
-	PLH::Instruction::Displacement displacement;
+	SIGILHOOK::Instruction::Displacement displacement;
 	displacement.Absolute = 0;
 
 	long lastID = 0;
 	for (int i = 0; i < 30; i++) {
-		auto inst = PLH::Instruction(0,
+		auto inst = SIGILHOOK::Instruction(0,
 									 displacement,
 									 0,
 									 false,
@@ -123,7 +123,7 @@ TEST_CASE("Test Instruction UUID generator", "[Instruction],[UID]") {
 									 {},
 									 0,
 									 "nothing",
-									 "nothing", PLH::Mode::x86);
+									 "nothing", SIGILHOOK::Mode::x86);
 
 		auto instCopy = inst;
 		REQUIRE(instCopy.getUID() == inst.getUID());
@@ -135,10 +135,10 @@ TEST_CASE("Test Instruction UUID generator", "[Instruction],[UID]") {
 }
 
 TEST_CASE("Test Disassemblers x64", "[ZydisDisassembler]") {
-	PLH::StackCanary canaryg;
-    PLH::ZydisDisassembler disasm(PLH::Mode::x64);
+	SIGILHOOK::StackCanary canaryg;
+    SIGILHOOK::ZydisDisassembler disasm(SIGILHOOK::Mode::x64);
 	auto                      Instructions = disasm.disassemble((uint64_t)&x64ASM.front(), (uint64_t)&x64ASM.front(),
-		(uint64_t)&x64ASM.front() + x64ASM.size(), PLH::MemAccessor());
+		(uint64_t)&x64ASM.front() + x64ASM.size(), SIGILHOOK::MemAccessor());
 
 	Instructions.erase(Instructions.begin() + 0xB, Instructions.end());
 
@@ -149,7 +149,7 @@ TEST_CASE("Test Disassemblers x64", "[ZydisDisassembler]") {
 	std::vector<uint8_t> CorrectSizes = {5, 5, 1, 4, 3, 2, 3, 3, 2, 5, 6};
 
 	SECTION("Check disassembler integrity") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		REQUIRE(Instructions.size() == 11);
 
 		std::cout << Instructions << std::endl;
@@ -179,20 +179,20 @@ TEST_CASE("Test Disassemblers x64", "[ZydisDisassembler]") {
 	}
 
 	SECTION("Check branch map") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		auto brMap = disasm.getBranchMap();
 		REQUIRE(brMap.size() == 1);
 		REQUIRE(brMap.find(Instructions[0].getAddress()) != brMap.end());
 	}
 
 	SECTION("Check instruction re-encoding integrity") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		auto vecCopy = x64ASM;
 		Instructions[8].setRelativeDisplacement(0x00);
-		disasm.writeEncoding(Instructions[8], PLH::MemAccessor());
+		disasm.writeEncoding(Instructions[8], SIGILHOOK::MemAccessor());
 
 		Instructions[9].setRelativeDisplacement(0x00);
-		disasm.writeEncoding(Instructions[9], PLH::MemAccessor());
+		disasm.writeEncoding(Instructions[9], SIGILHOOK::MemAccessor());
 
 		REQUIRE(Instructions[8].getDestination() == Instructions[8].getAddress() + Instructions[8].size());
 		REQUIRE(Instructions[9].getDestination() == Instructions[9].getAddress() + Instructions[9].size());
@@ -200,22 +200,22 @@ TEST_CASE("Test Disassemblers x64", "[ZydisDisassembler]") {
 		// undo writes
 		x64ASM = vecCopy;
 		Instructions = disasm.disassemble((uint64_t)&x64ASM.front(), (uint64_t)&x64ASM.front(),
-			(uint64_t)&x64ASM.front() + x64ASM.size(), PLH::MemAccessor());
+			(uint64_t)&x64ASM.front() + x64ASM.size(), SIGILHOOK::MemAccessor());
 	}
 
 	SECTION("Check multiple calls") {
-		PLH::StackCanary canary;
-		PLH::insts_t insts;
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::insts_t insts;
 		for (int i = 0; i < 100; i++) {
 			insts = disasm.disassemble((uint64_t)&x64ASM.front(), (uint64_t)&x64ASM.front(),
-				(uint64_t)&x64ASM.front() + x64ASM.size(), PLH::MemAccessor());
+				(uint64_t)&x64ASM.front() + x64ASM.size(), SIGILHOOK::MemAccessor());
 		}
 	}
 
 	SECTION("Verify branching, relative fields") {
-		PLH::StackCanary canary;
-		PLH::insts_t insts = disasm.disassemble((uint64_t)&x64ASM.front(), (uint64_t)&x64ASM.front(),
-			(uint64_t)&x64ASM.front() + x64ASM.size(), PLH::MemAccessor());
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::insts_t insts = disasm.disassemble((uint64_t)&x64ASM.front(), (uint64_t)&x64ASM.front(),
+			(uint64_t)&x64ASM.front() + x64ASM.size(), SIGILHOOK::MemAccessor());
 
 		REQUIRE(insts.at(0).hasDisplacement() == false);
 		REQUIRE(insts.at(0).isBranching() == false);
@@ -234,19 +234,19 @@ TEST_CASE("Test Disassemblers x64", "[ZydisDisassembler]") {
 	}
 
 	SECTION("Test garbage instructions") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		char randomBuf[500];
 		for (int i = 0; i < 500; i++)
 			randomBuf[i] = randByte();
 
 		auto insts = disasm.disassemble((uint64_t)randomBuf, (uint64_t)0x0,
-										500, PLH::MemAccessor());
+										500, SIGILHOOK::MemAccessor());
 		std::cout << insts << std::endl;
 	}
 }
 
 TEST_CASE("Test Disassemblers x86 FF25", "[ZydisDisassembler]") {
-#ifdef POLYHOOK2_ARCH_X64
+#ifdef SIGILHOOK_ARCH_X64
 	// this test is not suitable for x64 due to ff 25 not being re-written
 	return;
 #endif
@@ -258,17 +258,17 @@ TEST_CASE("Test Disassemblers x86 FF25", "[ZydisDisassembler]") {
 	// 0xFF25 <pMem> = &mem; (just fyi *mem == 0xAA0000AB)
 	memcpy(jmp_address_ptr, jmp_address_ptr + address_length, address_length);
 
-	PLH::StackCanary canaryg;
-    PLH::ZydisDisassembler disasm(PLH::Mode::x86);
+	SIGILHOOK::StackCanary canaryg;
+    SIGILHOOK::ZydisDisassembler disasm(SIGILHOOK::Mode::x86);
 	auto Instructions = disasm.disassemble(
 		(uint64_t)x86ASM_FF25.data(),
 		(uint64_t)x86ASM_FF25.data(),
 		(uint64_t)(jmp_address_ptr + address_length),
-		PLH::MemAccessor()
+		SIGILHOOK::MemAccessor()
 	);
 
 	SECTION("Check disassembler integrity") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		std::cout << Instructions << std::endl;
 
 		for (const auto& p : disasm.getBranchMap()) {
@@ -288,10 +288,10 @@ TEST_CASE("Test Disassemblers x86 FF25", "[ZydisDisassembler]") {
 }
 
 TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
-	PLH::StackCanary canaryg;
-    PLH::ZydisDisassembler disasm(PLH::Mode::x86);
+	SIGILHOOK::StackCanary canaryg;
+    SIGILHOOK::ZydisDisassembler disasm(SIGILHOOK::Mode::x86);
 	auto                      Instructions = disasm.disassemble((uint64_t)&x86ASM.front(), (uint64_t)&x86ASM.front(),
-		(uint64_t)&x86ASM.front() + x86ASM.size(), PLH::MemAccessor());
+		(uint64_t)&x86ASM.front() + x86ASM.size(), SIGILHOOK::MemAccessor());
 
 	// TODO: full buffer isn't disassembled
 	//Instructions.erase(Instructions.begin() + 0x9, Instructions.end());
@@ -319,7 +319,7 @@ TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
 	REQUIRE(Instructions.size() == 7);
 
 	SECTION("Check disassembler integrity") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		REQUIRE(Instructions.size() == 7);
 		std::cout << Instructions << std::endl;
 
@@ -329,7 +329,7 @@ TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
 	}
 
 	SECTION("Check branch map") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		auto brMap = disasm.getBranchMap();
 		REQUIRE(brMap.size() == 3);
 		REQUIRE(brMap.find(Instructions.at(3).getAddress()) != brMap.end());
@@ -338,13 +338,13 @@ TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
 	}
 
 	SECTION("Check instruction re-encoding integrity") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		auto vecCopy = x86ASM;
 		Instructions.at(3).setRelativeDisplacement(0x00);
-		disasm.writeEncoding(Instructions.at(3), PLH::MemAccessor());
+		disasm.writeEncoding(Instructions.at(3), SIGILHOOK::MemAccessor());
 
 		Instructions.at(6).setRelativeDisplacement(0x00);
-		disasm.writeEncoding(Instructions.at(6), PLH::MemAccessor());
+		disasm.writeEncoding(Instructions.at(6), SIGILHOOK::MemAccessor());
 
 		REQUIRE(Instructions.at(3).getDestination() == Instructions.at(3).getAddress() + Instructions.at(3).size());
 		REQUIRE(Instructions.at(6).getDestination() == Instructions.at(6).getAddress() + Instructions.at(6).size());
@@ -353,22 +353,22 @@ TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
 		x86ASM = vecCopy;
 		Instructions =
 			disasm.disassemble((uint64_t)&x86ASM.front(), (uint64_t)&x86ASM.front(),
-			(uint64_t)&x86ASM.front() + x86ASM.size(), PLH::MemAccessor());
+			(uint64_t)&x86ASM.front() + x86ASM.size(), SIGILHOOK::MemAccessor());
 	}
 
 	SECTION("Check multiple calls") {
-		PLH::StackCanary canary;
-		PLH::insts_t insts;
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::insts_t insts;
 		for (int i = 0; i < 100; i++) {
 			insts = disasm.disassemble((uint64_t)&x86ASM.front(), (uint64_t)&x86ASM.front(),
-				(uint64_t)&x86ASM.front() + x86ASM.size(), PLH::MemAccessor());
+				(uint64_t)&x86ASM.front() + x86ASM.size(), SIGILHOOK::MemAccessor());
 		}
 	}
 
 	SECTION("Verify branching, relative fields") {
-		PLH::StackCanary canary;
-		PLH::insts_t insts = disasm.disassemble((uint64_t)&x86ASM.front(), (uint64_t)&x86ASM.front(),
-			(uint64_t)&x86ASM.front() + x86ASM.size(), PLH::MemAccessor());
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::insts_t insts = disasm.disassemble((uint64_t)&x86ASM.front(), (uint64_t)&x86ASM.front(),
+			(uint64_t)&x86ASM.front() + x86ASM.size(), SIGILHOOK::MemAccessor());
 
 		REQUIRE(insts.at(4).isBranching());
 		REQUIRE(insts.at(4).hasDisplacement());
@@ -381,22 +381,22 @@ TEST_CASE("Test Disassemblers x86", "[ZydisDisassembler]") {
 	}
 
 	SECTION("Test garbage instructions") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		char randomBuf[500];
 		for (int i = 0; i < 500; i++)
 			randomBuf[i] = randByte();
 
 		auto insts = disasm.disassemble((uint64_t)randomBuf, (uint64_t)0x0,
-										500, PLH::MemAccessor());
+										500, SIGILHOOK::MemAccessor());
 		std::cout << insts << std::endl;
 	}
 }
 
 TEST_CASE("Test Disassemblers x64 Two", "[ZydisDisassembler]") {
-	PLH::StackCanary canaryg;
-    PLH::ZydisDisassembler disasm(PLH::Mode::x64);
-	PLH::insts_t Instructions = disasm.disassemble((uint64_t)&x64ASM2.front(), (uint64_t)&x64ASM2.front(),
-		(uint64_t)&x64ASM2.front() + x64ASM2.size(), PLH::MemAccessor());
+	SIGILHOOK::StackCanary canaryg;
+    SIGILHOOK::ZydisDisassembler disasm(SIGILHOOK::Mode::x64);
+	SIGILHOOK::insts_t Instructions = disasm.disassemble((uint64_t)&x64ASM2.front(), (uint64_t)&x64ASM2.front(),
+		(uint64_t)&x64ASM2.front() + x64ASM2.size(), SIGILHOOK::MemAccessor());
 
 	SECTION("Verify relative displacements") {
 		REQUIRE(Instructions.at(0).isDisplacementRelative());
@@ -409,7 +409,7 @@ TEST_CASE("Test Disassemblers x64 Two", "[ZydisDisassembler]") {
 	}
 
 	Instructions = disasm.disassemble((uint64_t)&x64ASM3.front(), (uint64_t)&x64ASM3.front(),
-		(uint64_t)&x64ASM3.front() + x64ASM3.size(), PLH::MemAccessor());
+		(uint64_t)&x64ASM3.front() + x64ASM3.size(), SIGILHOOK::MemAccessor());
 	SECTION("Verify displacements with immediates") {
 		REQUIRE(Instructions.at(0).isDisplacementRelative());
 		REQUIRE(Instructions.at(0).getDispSize() == 4);
@@ -418,26 +418,26 @@ TEST_CASE("Test Disassemblers x64 Two", "[ZydisDisassembler]") {
 }
 
 TEST_CASE("Test Disassemblers NOPS", "[ZydisDisassembler]") {
-	PLH::StackCanary canaryg;
-    PLH::ZydisDisassembler disasm(PLH::Mode::x64);
-	PLH::insts_t Instructions = disasm.disassemble((uint64_t)&x86x64Nops.front(), (uint64_t)&x86x64Nops.front(),
-		(uint64_t)&x86x64Nops.front() + x86x64Nops.size(), PLH::MemAccessor());
+	SIGILHOOK::StackCanary canaryg;
+    SIGILHOOK::ZydisDisassembler disasm(SIGILHOOK::Mode::x64);
+	SIGILHOOK::insts_t Instructions = disasm.disassemble((uint64_t)&x86x64Nops.front(), (uint64_t)&x86x64Nops.front(),
+		(uint64_t)&x86x64Nops.front() + x86x64Nops.size(), SIGILHOOK::MemAccessor());
 
-    PLH::ZydisDisassembler disasmx86(PLH::Mode::x86);
-	PLH::insts_t Instructionsx86 = disasmx86.disassemble((uint64_t)&x86x64Nops.front(), (uint64_t)&x86x64Nops.front(),
-		(uint64_t)&x86x64Nops.front() + x86x64Nops.size(), PLH::MemAccessor());
+    SIGILHOOK::ZydisDisassembler disasmx86(SIGILHOOK::Mode::x86);
+	SIGILHOOK::insts_t Instructionsx86 = disasmx86.disassemble((uint64_t)&x86x64Nops.front(), (uint64_t)&x86x64Nops.front(),
+		(uint64_t)&x86x64Nops.front() + x86x64Nops.size(), SIGILHOOK::MemAccessor());
 
 	SECTION("Verify multi-byte nops decodings x64") {
 		for (auto& ins : Instructions) {
 			REQUIRE(ins.getMnemonic() == "nop");
-			REQUIRE(PLH::ZydisDisassembler::isPadBytes(ins));
+			REQUIRE(SIGILHOOK::ZydisDisassembler::isPadBytes(ins));
 		}
 	}
 
 	SECTION("Verify multi-byte nops decodings x86") {
 		for (auto& ins : Instructionsx86) {
 			REQUIRE(ins.getMnemonic() == "nop");
-			REQUIRE(PLH::ZydisDisassembler::isPadBytes(ins));
+			REQUIRE(SIGILHOOK::ZydisDisassembler::isPadBytes(ins));
 		}
 	}
 }

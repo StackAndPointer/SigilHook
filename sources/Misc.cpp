@@ -1,8 +1,8 @@
-#include "polyhook2/MemAccessor.hpp"
-#include "polyhook2/Misc.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/MemAccessor.hpp"
+#include "sigilhook/Misc.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
-uint64_t PLH::findPattern(const uint64_t rangeStart, size_t len, const char* pattern)
+uint64_t SIGILHOOK::findPattern(const uint64_t rangeStart, size_t len, const char* pattern)
 {
 	unsigned char pattern_scratch[FINDPATTERN_SCRATCH_SIZE] = { 0 };
 	unsigned char mask_scratch[FINDPATTERN_SCRATCH_SIZE] = { 0 };
@@ -36,7 +36,7 @@ uint64_t PLH::findPattern(const uint64_t rangeStart, size_t len, const char* pat
 	return NULL;
 }
 
-uint64_t PLH::getPatternSize(const char* pattern)
+uint64_t SIGILHOOK::getPatternSize(const char* pattern)
 {
 	const size_t l = strlen(pattern);
 
@@ -44,7 +44,7 @@ uint64_t PLH::getPatternSize(const char* pattern)
 	return (l + 1) / 3;
 }
 
-uint64_t PLH::findPattern_rev(const uint64_t rangeStart, size_t len, const char* pattern)
+uint64_t SIGILHOOK::findPattern_rev(const uint64_t rangeStart, size_t len, const char* pattern)
 {
 	unsigned char pattern_scratch[FINDPATTERN_SCRATCH_SIZE] = { 0 };
 	unsigned char mask_scratch[FINDPATTERN_SCRATCH_SIZE] = { 0 };
@@ -78,19 +78,19 @@ uint64_t PLH::findPattern_rev(const uint64_t rangeStart, size_t len, const char*
 	return NULL;
 }
 
-uint64_t PLH::calc_2gb_below(uint64_t address)
+uint64_t SIGILHOOK::calc_2gb_below(uint64_t address)
 {
 	return (address > (uint64_t)0x7ff80000) ? address - 0x7ff80000 : 0x80000;
 }
 
-uint64_t PLH::calc_2gb_above(uint64_t address)
+uint64_t SIGILHOOK::calc_2gb_above(uint64_t address)
 {
 	return (address < (uint64_t)0xffffffff80000000) ? address + 0x7ff80000 : (uint64_t)0xfffffffffff80000;
 }
 
-#if defined(POLYHOOK2_OS_WINDOWS)
+#if defined(SIGILHOOK_OS_WINDOWS)
 
-bool PLH::boundedAllocSupported()
+bool SIGILHOOK::boundedAllocSupported()
 {
 	auto hMod = LoadLibraryA("kernelbase.dll");
 	if(hMod == 0)
@@ -99,7 +99,7 @@ bool PLH::boundedAllocSupported()
 	return GetProcAddress(hMod, "VirtualAlloc2") != 0;
 }
 
-uint64_t PLH::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
+uint64_t SIGILHOOK::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
 {
 	MEM_ADDRESS_REQUIREMENTS addressReqs = { 0 };
 	MEM_EXTENDED_PARAMETER param = { 0 };
@@ -127,7 +127,7 @@ uint64_t PLH::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
 		&param, 1);
 }
 
-uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
+uint64_t SIGILHOOK::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 {
 	SYSTEM_INFO si;
 	memset(&si, 0, sizeof(si));
@@ -158,13 +158,13 @@ uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 	return 0;
 }
 
-void PLH::boundAllocFree(uint64_t address, uint64_t size)
+void SIGILHOOK::boundAllocFree(uint64_t address, uint64_t size)
 {
 	(void)size;
 	VirtualFree((LPVOID)address, (SIZE_T)0, MEM_RELEASE);
 }
 
-size_t PLH::getAllocationAlignment()
+size_t SIGILHOOK::getAllocationAlignment()
 {
 	SYSTEM_INFO si;
 	memset(&si, 0, sizeof(si));
@@ -172,26 +172,26 @@ size_t PLH::getAllocationAlignment()
 	return si.dwAllocationGranularity;
 }
 
-size_t PLH::getPageSize()
+size_t SIGILHOOK::getPageSize()
 {
 	SYSTEM_INFO sysInfo;
 	GetSystemInfo(&sysInfo);
 	return static_cast<uint64_t>(sysInfo.dwPageSize);
 }
 
-#elif defined(POLYHOOK2_OS_LINUX)
+#elif defined(SIGILHOOK_OS_LINUX)
 
-bool PLH::boundedAllocSupported()
+bool SIGILHOOK::boundedAllocSupported()
 {
 	return true;
 }
 
-uint64_t PLH::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
+uint64_t SIGILHOOK::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
 {
 	return boundAllocLegacy(min, max, size);
 }
 
-uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
+uint64_t SIGILHOOK::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 {
 	void* hint = (void*)((end - 1) / 2 + start / 2);
 	uint64_t res = (uint64_t)mmap(hint, (size_t)size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -208,12 +208,12 @@ uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 	return res;
 }
 
-void PLH::boundAllocFree(uint64_t address, uint64_t size)
+void SIGILHOOK::boundAllocFree(uint64_t address, uint64_t size)
 {
 	munmap((void*)address, (size_t)size);
 }
 
-size_t PLH::getAllocationAlignment()
+size_t SIGILHOOK::getAllocationAlignment()
 {
 /*
 From malloc-internal.h and malloc-alignment.h
@@ -231,24 +231,24 @@ From malloc-internal.h and malloc-alignment.h
 	return getPageSize();
 }
 
-size_t PLH::getPageSize()
+size_t SIGILHOOK::getPageSize()
 {
 	return static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
 }
 
-#elif defined(POLYHOOK2_OS_APPLE)
+#elif defined(SIGILHOOK_OS_APPLE)
 
-bool PLH::boundedAllocSupported()
+bool SIGILHOOK::boundedAllocSupported()
 {
 	return false;
 }
 
-uint64_t PLH::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
+uint64_t SIGILHOOK::boundAlloc(uint64_t min, uint64_t max, uint64_t size)
 {
 	return boundAllocLegacy(min, max, size);
 }
 
-uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
+uint64_t SIGILHOOK::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 {
 	// VM_FLAGS_ANYWHERE allows for better compatibility as the Kernel will find a place for us.
 	//int flags = (address_hint == nullptr ? VM_FLAGS_ANYWHERE : VM_FLAGS_FIXED);
@@ -271,17 +271,17 @@ uint64_t PLH::boundAllocLegacy(uint64_t start, uint64_t end, uint64_t size)
 	return 0;
 }
 
-void PLH::boundAllocFree(uint64_t address, uint64_t size)
+void SIGILHOOK::boundAllocFree(uint64_t address, uint64_t size)
 {
 	mach_vm_deallocate(mach_task_self(), (mach_vm_address_t)address, size);
 }
 
-size_t PLH::getAllocationAlignment()
+size_t SIGILHOOK::getAllocationAlignment()
 {
-	return PLH::MemAccessor::getPageSize();
+	return SIGILHOOK::MemAccessor::getPageSize();
 }
 
-size_t PLH::getPageSize()
+size_t SIGILHOOK::getPageSize()
 {
 	return static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
 }

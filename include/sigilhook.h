@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef SIGILHOOK_H
 #define SIGILHOOK_H
 
@@ -77,16 +78,28 @@ typedef struct sigilhook_call_frame {
     uint8_t argument_count;
     uint64_t* return_value;
     uint8_t* call_original;
+    uint8_t* return_value_overridden;
 } sigilhook_call_frame;
 
 typedef void (SIGILHOOK_CALL *sigilhook_jit_callback)(
     sigilhook_call_frame* frame, void* user_data);
+
+typedef enum sigilhook_log_level {
+    SIGILHOOK_LOG_INFO = 0,
+    SIGILHOOK_LOG_WARNING = 1,
+    SIGILHOOK_LOG_ERROR = 2
+} sigilhook_log_level;
+
+typedef void (SIGILHOOK_CALL *sigilhook_log_callback)(
+    sigilhook_log_level level, const char* message, void* user_data);
 
 SIGILHOOK_API uint32_t SIGILHOOK_CALL sigilhook_api_version(void);
 SIGILHOOK_API sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void);
 SIGILHOOK_API const char* SIGILHOOK_CALL sigilhook_status_string(sigilhook_status status);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_get_last_error(char* buffer, size_t capacity);
 SIGILHOOK_API void SIGILHOOK_CALL sigilhook_clear_last_error(void);
+SIGILHOOK_API void SIGILHOOK_CALL sigilhook_set_log_callback(
+    sigilhook_log_callback callback, void* user_data);
 
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
     uint64_t target, uint64_t callback, sigilhook_handle* out_hook, uint64_t* out_trampoline);
@@ -149,6 +162,8 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_start(const wcha
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop(void);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_load_directory(const wchar_t* script_directory);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_set_shared_u64(const char* name, uint64_t value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* name, uint64_t* out_value);
 
 #ifdef __cplusplus
 }

@@ -2,12 +2,12 @@
 // Created by steve on 7/9/18.
 //
 #include <Catch.hpp>
-#include "polyhook2/Detour/x64Detour.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
 
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
 #include <asmjit/x86.h>
 
@@ -24,7 +24,7 @@ printf inside the body can mitigate this significantly. Do serious checking in d
 or releasewithdebinfo mode (relwithdebinfo optimizes sliiiightly less)**/
 
 NOINLINE void hookMe1() {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     volatile int var = 1;
     volatile int var2 = 0;
     var2 += 3;
@@ -38,14 +38,14 @@ NOINLINE void hookMe1() {
 
 uint64_t hookMe1Tramp = NULL;
 HOOK_CALLBACK(&hookMe1, h_hookMe1, {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     std::cout << "Hook 1 Called!" << std::endl;
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookMe1Tramp, &hookMe1)();
+    return SIGILHOOK::FnCast(hookMe1Tramp, &hookMe1)();
 });
 
 NOINLINE void hookMe2() {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     for (int i = 0; i < 10; i++) {
         printf("%d\n", i);
     }
@@ -53,10 +53,10 @@ NOINLINE void hookMe2() {
 
 uint64_t hookMe2Tramp = NULL;
 HOOK_CALLBACK(&hookMe2, h_hookMe2, {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     std::cout << "Hook 2 Called!" << std::endl;
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookMe2Tramp, &hookMe2)();
+    return SIGILHOOK::FnCast(hookMe2Tramp, &hookMe2)();
 });
 
 unsigned char hookMe3[] = {
@@ -99,34 +99,34 @@ unsigned char hookMe6[] =
 uint64_t nullTramp = NULL;
 
 NOINLINE void h_nullstub() {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     volatile int i = 0;
-    PH_UNUSED(i);
+    SIGILHOOK_UNUSED(i);
 }
 
 uint64_t hookMallocTramp = NULL;
 HOOK_CALLBACK(&malloc, h_hookMalloc, { // NOLINT(cert-err58-cpp)
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     volatile int i = 0;
-    PH_UNUSED(i);
+    SIGILHOOK_UNUSED(i);
     effects.PeakEffect().trigger();
 
-    return PLH::FnCast(hookMallocTramp, &malloc)(_args...);
+    return SIGILHOOK::FnCast(hookMallocTramp, &malloc)(_args...);
 });
 
 uint64_t oCreateMutexExA = 0;
 HOOK_CALLBACK(&CreateMutexExA, hCreateMutexExA, { // NOLINT(cert-err58-cpp)
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     LPCSTR lpName = GET_ARG(1);
     printf("kernel32!CreateMutexExA  Name:%s\n", lpName);
-    return PLH::FnCast(oCreateMutexExA, &CreateMutexExA)(_args...);
+    return SIGILHOOK::FnCast(oCreateMutexExA, &CreateMutexExA)(_args...);
 });
 
 uint64_t oSHGetSpecialFolderPathW = 0;
 HOOK_CALLBACK(&SHGetSpecialFolderPathW, hSHGetSpecialFolderPathW, {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     printf("shell32!SHGetSpecialFolderPathW\n");
-    return PLH::FnCast(oSHGetSpecialFolderPathW, &SHGetSpecialFolderPathW)(_args...);
+    return SIGILHOOK::FnCast(oSHGetSpecialFolderPathW, &SHGetSpecialFolderPathW)(_args...);
 });
 
 typedef void(*PKNORMAL_ROUTINE)(void* NormalContext, void* SystemArgument1, void* SystemArgument2);
@@ -137,13 +137,13 @@ tNtQueueApcThread pNtQueueApcthread = (tNtQueueApcThread)GetProcAddress(GetModul
 HOOK_CALLBACK(pNtQueueApcthread, h_NtQueueapcThread, { // NOLINT(cert-err58-cpp)
     std::cout << "hkNtQueueApcThread!" << std::endl;
 
-    return PLH::FnCast(hkNtQueueapcThread, pNtQueueApcthread)(_args...);
+    return SIGILHOOK::FnCast(hkNtQueueapcThread, pNtQueueApcthread)(_args...);
 });
 
 TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
     SECTION("Normal function") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
@@ -154,8 +154,8 @@ TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
 
     SECTION("Normal function rehook")
     {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
@@ -177,12 +177,12 @@ TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
             ... the goods ...
         */
     SECTION("WinApi Indirection") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &CreateMutexExA, (uint64_t) hCreateMutexExA, &oCreateMutexExA);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &CreateMutexExA, (uint64_t) hCreateMutexExA, &oCreateMutexExA);
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
 
-        PLH::x64Detour detour2((uint64_t)&SHGetSpecialFolderPathW, (uint64_t)hSHGetSpecialFolderPathW, &oSHGetSpecialFolderPathW);
+        SIGILHOOK::x64Detour detour2((uint64_t)&SHGetSpecialFolderPathW, (uint64_t)hSHGetSpecialFolderPathW, &oSHGetSpecialFolderPathW);
         REQUIRE(detour2.hook() == true);
        
         wchar_t receiver[MAX_PATH] = { 0 };
@@ -193,8 +193,8 @@ TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
     }
 
     SECTION("Loop function") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe2, (uint64_t) h_hookMe2, &hookMe2Tramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe2, (uint64_t) h_hookMe2, &hookMe2Tramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
@@ -204,39 +204,39 @@ TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
     }
 
     SECTION("Jmp into prol w/src in range") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe3, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe3, (uint64_t) &h_nullstub, &nullTramp);
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Jmp into prol w/src out of range") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe4, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe4, (uint64_t) &h_nullstub, &nullTramp);
 
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Call instruction early in prologue") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &hookMe5, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMe5, (uint64_t) &h_nullstub, &nullTramp);
 
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Call with fs base") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t)&hookMe6, (uint64_t)&h_nullstub, &nullTramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t)&hookMe6, (uint64_t)&h_nullstub, &nullTramp);
 
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("hook malloc") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) &malloc, (uint64_t) h_hookMalloc, &hookMallocTramp);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) &malloc, (uint64_t) h_hookMalloc, &hookMallocTramp);
         effects.PushEffect(); // catch does some allocations, push effect first so peak works
 
         REQUIRE(detour.hook());
@@ -248,7 +248,7 @@ TEST_CASE("Testing x64 detours", "[x64Detour][ADetour]") {
     }
 
     SECTION("queue apc thread") {
-        PLH::x64Detour detour((uint64_t)pNtQueueApcthread, (uint64_t)h_NtQueueapcThread, &hkNtQueueapcThread);
+        SIGILHOOK::x64Detour detour((uint64_t)pNtQueueApcthread, (uint64_t)h_NtQueueapcThread, &hkNtQueueapcThread);
         effects.PushEffect(); // catch does some allocations, push effect first so peak works
         REQUIRE(detour.hook() == true);
     }

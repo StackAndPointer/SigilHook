@@ -1,12 +1,12 @@
-#include "polyhook2/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
 
-PLH::StackCanary::StackCanary() {
+SIGILHOOK::StackCanary::StackCanary() {
 	for (int i = 0; i < 50; i++) {
 		buf[i] = 0xCE;
 	}
 }
 
-bool PLH::StackCanary::isStackGood() {
+bool SIGILHOOK::StackCanary::isStackGood() {
 	for (int i = 0; i < 50; i++) {
 		if (buf[i] != 0xCE)
 			return false;
@@ -14,7 +14,7 @@ bool PLH::StackCanary::isStackGood() {
 	return true;
 }
 
-PLH::StackCanary::~StackCanary() noexcept(false) {
+SIGILHOOK::StackCanary::~StackCanary() noexcept(false) {
 	if (!isStackGood())
 		throw "Stack corruption detected";
 }

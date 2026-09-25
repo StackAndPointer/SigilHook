@@ -1,27 +1,27 @@
-#include "polyhook2/ErrorLog.hpp"
+#include "sigilhook/ErrorLog.hpp"
 
-std::shared_ptr<PLH::Logger> PLH::Log::m_logger = nullptr;
+std::shared_ptr<SIGILHOOK::Logger> SIGILHOOK::Log::m_logger = nullptr;
 
-void PLH::Log::registerLogger(std::shared_ptr<Logger> logger) {
+void SIGILHOOK::Log::registerLogger(std::shared_ptr<Logger> logger) {
 	m_logger = logger;
 }
 
-void PLH::Log::log(std::string msg, ErrorLevel level) {
+void SIGILHOOK::Log::log(std::string msg, ErrorLevel level) {
 	if (m_logger) {
 		m_logger->log(std::move(msg), level);
 	}
 }
 
-void PLH::ErrorLog::setLogLevel(PLH::ErrorLevel level) {
+void SIGILHOOK::ErrorLog::setLogLevel(SIGILHOOK::ErrorLevel level) {
 	m_logLevel = level;
 }
 
-void PLH::ErrorLog::log(const std::string& msg, ErrorLevel level)
+void SIGILHOOK::ErrorLog::log(const std::string& msg, ErrorLevel level)
 {
 	push({ msg, level });
 }
 
-void PLH::ErrorLog::push(const PLH::Error& err) {
+void SIGILHOOK::ErrorLog::push(const SIGILHOOK::Error& err) {
 	if (err.lvl >= m_logLevel) {
 		switch (err.lvl) {
 		case ErrorLevel::INFO:
@@ -41,7 +41,7 @@ void PLH::ErrorLog::push(const PLH::Error& err) {
 	m_log.push_back(err);
 }
 
-PLH::Error PLH::ErrorLog::pop() {
+SIGILHOOK::Error SIGILHOOK::ErrorLog::pop() {
 	Error err{};
 	if (!m_log.empty()) {
 		err = m_log.back();
@@ -50,7 +50,7 @@ PLH::Error PLH::ErrorLog::pop() {
 	return err;
 }
 
-PLH::ErrorLog& PLH::ErrorLog::singleton() {
+SIGILHOOK::ErrorLog& SIGILHOOK::ErrorLog::singleton() {
 	static ErrorLog log;
 	return log;
 }

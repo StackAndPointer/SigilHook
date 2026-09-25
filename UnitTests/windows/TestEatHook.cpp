@@ -1,10 +1,10 @@
 #include <Catch.hpp>
 
-#include "polyhook2/PE/EatHook.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
-#include "polyhook2/Detour/ADetour.hpp"
+#include "sigilhook/PE/EatHook.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
+#include "sigilhook/Detour/ADetour.hpp"
 
 EffectTracker eatEffectTracker;
 
@@ -13,19 +13,19 @@ uint64_t oEatTestExport;
 
 extern "C" __declspec(dllexport) NOINLINE void EatTestExport()
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 }
 
 NOINLINE void hkEatTestExport()
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	eatEffectTracker.PeakEffect().trigger();
 }
 
 TEST_CASE("Hook internal test export", "[EatHook]") {
 	SECTION("Verify if export is found and hooked when module name is empty") {
-		PLH::StackCanary canary;
-		PLH::EatHook hook("EatTestExport", L"", (char*)&hkEatTestExport, (uint64_t*)&oEatTestExport);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::EatHook hook("EatTestExport", L"", (char*)&hkEatTestExport, (uint64_t*)&oEatTestExport);
 		REQUIRE(hook.hook());
 
 		auto pExport = (tEatTestExport)GetProcAddress(GetModuleHandle(nullptr), "EatTestExport");
@@ -38,8 +38,8 @@ TEST_CASE("Hook internal test export", "[EatHook]") {
 	}
 
 	SECTION("Verify if export is found and hooked when module name is explicitly given") {
-		PLH::StackCanary canary;
-		PLH::EatHook hook("EatTestExport", L"Polyhook_2.exe", (char*)&hkEatTestExport, (uint64_t*)&oEatTestExport);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::EatHook hook("EatTestExport", L"SigilHook.exe", (char*)&hkEatTestExport, (uint64_t*)&oEatTestExport);
 		REQUIRE(hook.hook());
 
 		auto pExport = (tEatTestExport)GetProcAddress(GetModuleHandle(nullptr), "EatTestExport");
@@ -55,7 +55,7 @@ TEST_CASE("Hook internal test export", "[EatHook]") {
 typedef int(__stdcall* tEatMessageBox)(HWND, LPCTSTR, LPCTSTR, UINT);
 uint64_t oEatMessageBox;
 int __stdcall hkEatMessageBox(HWND, LPCTSTR, LPCTSTR, UINT) {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	auto MsgBox = (tEatMessageBox)oEatMessageBox;
 	MsgBox(nullptr, TEXT("My Hook"), TEXT("text"), 0);
 	eatEffectTracker.PeakEffect().trigger();
@@ -63,10 +63,10 @@ int __stdcall hkEatMessageBox(HWND, LPCTSTR, LPCTSTR, UINT) {
 }
 
 // Disable test in CI that require GUI interactions
-#ifndef PLH_CI
+#ifndef SIGILHOOK_CI
 
 TEST_CASE("Hook User32.MessageBoxA using module name", "[EatHook]") {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	LoadLibrary(TEXT("User32.dll"));
 
 #ifdef UNICODE
@@ -74,7 +74,7 @@ TEST_CASE("Hook User32.MessageBoxA using module name", "[EatHook]") {
 #else
 	std::string apiName = "MessageBoxA";
 #endif
-	PLH::EatHook hook(apiName, L"User32.dll", (char*)&hkEatMessageBox, (uint64_t*)&oEatMessageBox);
+	SIGILHOOK::EatHook hook(apiName, L"User32.dll", (char*)&hkEatMessageBox, (uint64_t*)&oEatMessageBox);
 	REQUIRE(hook.hook());
 
 	eatEffectTracker.PushEffect();
@@ -92,17 +92,17 @@ typedef DWORD(__stdcall* tGetTickCount)();
 uint64_t oGetTickCount = 0;
 DWORD WINAPI hkGetTickCount()
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	eatEffectTracker.PeakEffect().trigger();
 
 	auto result = ((tGetTickCount)oGetTickCount)();
-	PLH::Log::log("Original GetTickCount: " + std::to_string(result), PLH::ErrorLevel::INFO);
+	SIGILHOOK::Log::log("Original GetTickCount: " + std::to_string(result), SIGILHOOK::ErrorLevel::INFO);
 
 	return 0x1337;
 }
 
 TEST_CASE("Hook Kernel32.GetTickCount using module path", "[EatHook]") {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 
 	const auto libHandle = LoadLibrary(TEXT("Kernel32.dll"));
 	WCHAR libPath[MAX_PATH];
@@ -110,7 +110,7 @@ TEST_CASE("Hook Kernel32.GetTickCount using module path", "[EatHook]") {
 
 	constexpr auto apiName = "GetTickCount";
 
-	PLH::EatHook hook(apiName, libPath, (char*) hkGetTickCount, &oGetTickCount);
+	SIGILHOOK::EatHook hook(apiName, libPath, (char*) hkGetTickCount, &oGetTickCount);
 	REQUIRE(hook.hook());
 
 	eatEffectTracker.PushEffect();
@@ -127,23 +127,23 @@ typedef ULONGLONG(__stdcall* tGetTickCount64)();
 uint64_t oGetTickCount64 = 0;
 ULONGLONG WINAPI hkGetTickCount64()
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	eatEffectTracker.PeakEffect().trigger();
 
 	auto result = ((tGetTickCount)oGetTickCount64)();
-	PLH::Log::log("Original GetTickCount64: " + std::to_string(result), PLH::ErrorLevel::INFO);
+	SIGILHOOK::Log::log("Original GetTickCount64: " + std::to_string(result), SIGILHOOK::ErrorLevel::INFO);
 
 	return 0xDEADBEEF;
 }
 
 TEST_CASE("Hook Kernel32.GetTickCount64 using module handle", "[EatHook]") {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 
 	const auto libHandle = LoadLibrary(TEXT("Kernel32.dll"));
 
 	constexpr auto apiName = "GetTickCount64";
 
-	PLH::EatHook hook(apiName, libHandle, (uint64_t) hkGetTickCount64, &oGetTickCount64);
+	SIGILHOOK::EatHook hook(apiName, libHandle, (uint64_t) hkGetTickCount64, &oGetTickCount64);
 	REQUIRE(hook.hook());
 
 	eatEffectTracker.PushEffect();
@@ -160,7 +160,7 @@ typedef void(__stdcall* tEatGetSystemTime)(PSYSTEMTIME systemTime);
 uint64_t oEatGetSystemTime;
 void WINAPI hkGetSystemTime(PSYSTEMTIME systemTime)
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	eatEffectTracker.PeakEffect().trigger();
 	((tEatGetSystemTime)oEatGetSystemTime)(systemTime);
 }
@@ -169,7 +169,7 @@ typedef void(__stdcall* tEatGetLocalTime)(PSYSTEMTIME systemTime);
 uint64_t oEatGetLocalTime;
 void WINAPI hkGetLocalTime(PSYSTEMTIME systemTime)
 {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	eatEffectTracker.PeakEffect().trigger();
 	((tEatGetLocalTime)oEatGetLocalTime)(systemTime);
 }
@@ -178,8 +178,8 @@ TEST_CASE("Hook Kernel32.[GetSystemTime,GetLocalTime]", "[EatHook]") {
 	// These are out of module hooks that require a trampoline stub.
 	// Multiple hooks can fail if the trampoline region isn't re-used
 	// across multiple calls. Or if no free block is found at all
-	PLH::StackCanary canary;
-	PLH::EatHook hook_GST("GetSystemTime", L"kernel32.dll", (char*)&hkGetSystemTime, (uint64_t*)&oEatGetSystemTime);
+	SIGILHOOK::StackCanary canary;
+	SIGILHOOK::EatHook hook_GST("GetSystemTime", L"kernel32.dll", (char*)&hkGetSystemTime, (uint64_t*)&oEatGetSystemTime);
 	REQUIRE(hook_GST.hook());
 	eatEffectTracker.PushEffect();
 
@@ -189,7 +189,7 @@ TEST_CASE("Hook Kernel32.[GetSystemTime,GetLocalTime]", "[EatHook]") {
 	GST(&t);
 	REQUIRE(eatEffectTracker.PopEffect().didExecute());
 
-	PLH::EatHook hook_GLT("GetLocalTime", L"kernel32.dll", (char*)&hkGetLocalTime, (uint64_t*)&oEatGetLocalTime);
+	SIGILHOOK::EatHook hook_GLT("GetLocalTime", L"kernel32.dll", (char*)&hkGetLocalTime, (uint64_t*)&oEatGetLocalTime);
 	REQUIRE(hook_GLT.hook());
 	eatEffectTracker.PushEffect();
 

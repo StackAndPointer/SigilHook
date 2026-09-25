@@ -10,13 +10,13 @@
 
 #include <asmtk/asmtk.h>
 
-#include "polyhook2/Detour/x64Detour.hpp"
-#include "polyhook2/MemProtector.hpp"
-#include "polyhook2/Misc.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
+#include "sigilhook/MemProtector.hpp"
+#include "sigilhook/Misc.hpp"
 
 #include "./InternalUtils.hpp"
 
-namespace PLH {
+namespace SIGILHOOK {
 
 using std::optional;
 using std::string;
@@ -219,7 +219,7 @@ std::optional<insts_t> x64Detour::make_inplace_trampoline(const uint64_t base_ad
 	if (const auto error = m_asmjit_rt.add(&trampoline_address, &code)) {
         const auto message = std::string("Failed to generate in-place trampoline: ")
                              + asmjit::DebugUtils::errorAsString(error);
-        PLH::Log::log(message, PLH::ErrorLevel::SEV);
+        SIGILHOOK::Log::log(message, SIGILHOOK::ErrorLevel::SEV);
         return {};
     }
 
@@ -771,7 +771,7 @@ bool x64Detour::makeTrampoline(insts_t& prologue, insts_t& outJmpTable) {
     }
     if(!instsNeedingTranslation.empty()) {
         Log::log("Instructions needing translation:\n" + instsToStr(instsNeedingTranslation) + "\n", ErrorLevel::INFO);
-        PLH_SET_DIAGNOSTIC(Diagnostic::TranslatedInstructions);
+        SIGILHOOK_SET_DIAGNOSTIC(Diagnostic::TranslatedInstructions);
     }
 
     Log::log("Trampoline address: " + int_to_hex(m_trampoline), ErrorLevel::INFO);

@@ -1,6 +1,6 @@
-#include "polyhook2/Exceptions/HWBreakPointHook.hpp"
+#include "sigilhook/Exceptions/HWBreakPointHook.hpp"
 
-PLH::HWBreakPointHook::HWBreakPointHook(const uint64_t fnAddress, const uint64_t fnCallback, HANDLE hThread) : AVehHook() {
+SIGILHOOK::HWBreakPointHook::HWBreakPointHook(const uint64_t fnAddress, const uint64_t fnCallback, HANDLE hThread) : AVehHook() {
 	m_fnCallback = fnCallback;
 	m_fnAddress = fnAddress;
 
@@ -11,7 +11,7 @@ PLH::HWBreakPointHook::HWBreakPointHook(const uint64_t fnAddress, const uint64_t
 	m_hThread = hThread;
 }
 
-PLH::HWBreakPointHook::HWBreakPointHook(const char* fnAddress, const char* fnCallback, HANDLE hThread) : AVehHook() {
+SIGILHOOK::HWBreakPointHook::HWBreakPointHook(const char* fnAddress, const char* fnCallback, HANDLE hThread) : AVehHook() {
 	m_fnCallback = (uint64_t)fnCallback;
 	m_fnAddress = (uint64_t)fnAddress;
 
@@ -22,7 +22,7 @@ PLH::HWBreakPointHook::HWBreakPointHook(const char* fnAddress, const char* fnCal
 	m_hThread = hThread;
 }
 
-bool PLH::HWBreakPointHook::hook()
+bool SIGILHOOK::HWBreakPointHook::hook()
 {
 	CONTEXT ctx;
 	ZeroMemory(&ctx, sizeof(ctx));
@@ -75,7 +75,7 @@ bool PLH::HWBreakPointHook::hook()
 	return true;
 }
 
-bool PLH::HWBreakPointHook::unHook() {
+bool SIGILHOOK::HWBreakPointHook::unHook() {
 	assert(m_hooked);
 	if (!m_hooked) {
 		Log::log("HWBPHook unhook failed: no hook present", ErrorLevel::SEV);
@@ -101,7 +101,7 @@ bool PLH::HWBreakPointHook::unHook() {
 	return true;
 }
 
-LONG PLH::HWBreakPointHook::OnException(EXCEPTION_POINTERS* ExceptionInfo) {
+LONG SIGILHOOK::HWBreakPointHook::OnException(EXCEPTION_POINTERS* ExceptionInfo) {
 	if (ExceptionInfo->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
 		return EXCEPTION_CONTINUE_SEARCH;
 

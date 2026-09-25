@@ -6,11 +6,11 @@
 #include <asmtk/asmtk.h>
 #include <asmjit/x86.h>
 
-#include "polyhook2/Detour/x86Detour.hpp"
+#include "sigilhook/Detour/x86Detour.hpp"
 
 #include "./InternalUtils.hpp"
 
-namespace PLH {
+namespace SIGILHOOK {
 
 x86Detour::x86Detour(const uint64_t fnAddress, const uint64_t fnCallback, uint64_t* userTrampVar)
     : Detour(fnAddress, fnCallback, userTrampVar, getArchType()) {
@@ -111,13 +111,13 @@ bool x86Detour::fixSpecialCases(insts_t& prologue) {
             if (!fixCallRoutineReturningSP(instruction, *routine)) {
                 return false;
             }
-            PLH_SET_DIAGNOSTIC(Diagnostic::FixedCallToRoutineReadingSP);
+            SIGILHOOK_SET_DIAGNOSTIC(Diagnostic::FixedCallToRoutineReadingSP);
         } else if (isCallInlineReturningSP(instruction)) {
             // Fix for #217 https://github.com/stevemk14ebr/PolyHook_2_0/issues/217
             if (!fixCallInlineReturningSP(instruction)) {
                 return false;
             }
-            PLH_SET_DIAGNOSTIC(Diagnostic::FixedInlineCallToReadSP);
+            SIGILHOOK_SET_DIAGNOSTIC(Diagnostic::FixedInlineCallToReadSP);
         }
     }
 

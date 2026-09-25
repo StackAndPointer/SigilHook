@@ -1,8 +1,9 @@
-if(WIN32 AND POLYHOOK_FEATURE_ANGELSCRIPT)
-    option(POLYHOOK_BUILD_INJECTOR_DLL "Build the injectable SigilHook.dll runtime" ON)
-    option(POLYHOOK_BUILD_API_SMOKE_TEST "Build the exported C API smoke test" ON)
+if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
+    option(SIGILHOOK_BUILD_INJECTOR_DLL "Build the injectable SigilHook.dll runtime" ON)
+    option(SIGILHOOK_BUILD_API_SMOKE_TEST "Build the exported C API smoke test" ON)
+    option(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST "Build the AngelScript runtime smoke test" ON)
 
-    if(POLYHOOK_BUILD_INJECTOR_DLL)
+    if(SIGILHOOK_BUILD_INJECTOR_DLL)
         add_library(SigilHookDll SHARED
             ${PROJECT_SOURCE_DIR}/sources/SigilHookApi.cpp
             ${PROJECT_SOURCE_DIR}/sources/SigilHookRuntime.cpp
@@ -20,12 +21,12 @@ if(WIN32 AND POLYHOOK_FEATURE_ANGELSCRIPT)
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/angelscript/include
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptstdstring
         )
-        target_link_libraries(SigilHookDll PRIVATE ${PROJECT_NAME} ${POLYHOOK_ANGELSCRIPT_TARGET})
+        target_link_libraries(SigilHookDll PRIVATE ${PROJECT_NAME} ${SIGILHOOK_ANGELSCRIPT_TARGET})
 
         if(MSVC)
             target_compile_options(SigilHookDll PRIVATE /W4 /Z7)
             target_link_libraries(SigilHookDll PRIVATE -DEBUG)
-            if(POLYHOOK_BUILD_STATIC_RUNTIME)
+            if(SIGILHOOK_BUILD_STATIC_RUNTIME)
                 set_target_properties(SigilHookDll PROPERTIES
                     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
                 )
@@ -38,8 +39,9 @@ if(WIN32 AND POLYHOOK_FEATURE_ANGELSCRIPT)
             ARCHIVE DESTINATION lib
         )
         install(FILES ${PROJECT_SOURCE_DIR}/include/sigilhook.h DESTINATION include)
+        install(FILES ${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash DESTINATION share/SigilHook)
 
-        if(POLYHOOK_BUILD_API_SMOKE_TEST)
+        if(SIGILHOOK_BUILD_API_SMOKE_TEST)
             add_executable(SigilHookApiSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookApiSmokeTest/main.cpp
             )
@@ -48,6 +50,24 @@ if(WIN32 AND POLYHOOK_FEATURE_ANGELSCRIPT)
             target_link_libraries(SigilHookApiSmokeTest PRIVATE SigilHookDll)
             enable_testing()
             add_test(NAME SigilHookApiSmokeTest COMMAND SigilHookApiSmokeTest)
+            set_tests_properties(SigilHookApiSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
         endif()
-    endif()
+
+        if(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST)
+            set(SIGILHOOK_SCRIPT_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHookScriptSmokeTestScripts")
+            file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}")
+            configure_file(${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash" COPYONLY)
+            configure_file(${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/scripts/10-test.as "${SIGILHOOK_SCRIPT_TEST_DIR}/10-test.as" COPYONLY)
+            add_executable(SigilHookScriptSmokeTest
+                ${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/main.cpp
+            )
+            target_compile_features(SigilHookScriptSmokeTest PRIVATE cxx_std_20)
+            target_compile_definitions(SigilHookScriptSmokeTest PRIVATE SIGILHOOK_TEST_SCRIPT_DIRECTORY=L"${SIGILHOOK_SCRIPT_TEST_DIR}")
+            target_include_directories(SigilHookScriptSmokeTest PRIVATE ${PROJECT_SOURCE_DIR}/include)
+            target_link_libraries(SigilHookScriptSmokeTest PRIVATE SigilHookDll)
+            enable_testing()
+            add_test(NAME SigilHookScriptSmokeTest COMMAND SigilHookScriptSmokeTest)
+            set_tests_properties(SigilHookScriptSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
+        endif()
+        endif()
 endif()

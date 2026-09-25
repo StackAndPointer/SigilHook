@@ -1,22 +1,22 @@
-#include "polyhook2/MemAccessor.hpp"
-#include "polyhook2/MemProtector.hpp"
-#include "polyhook2/Misc.hpp"
+#include "sigilhook/MemAccessor.hpp"
+#include "sigilhook/MemProtector.hpp"
+#include "sigilhook/Misc.hpp"
 
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
-#if defined(POLYHOOK2_OS_WINDOWS)
+#if defined(SIGILHOOK_OS_WINDOWS)
 
-bool PLH::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
+bool SIGILHOOK::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
 	memcpy((char*)dest, (char*)src, (SIZE_T)size);
 	return true;
 }
 
-bool PLH::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
 	written = 0;
 	return WriteProcessMemory(GetCurrentProcess(), (char*)dest, (char*)src, (SIZE_T)size, (PSIZE_T)&written);
 }
 
-bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, size_t& read) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, size_t& read) const noexcept {
 	HANDLE process = GetCurrentProcess();
 	read = 0;
 
@@ -37,18 +37,18 @@ bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, s
 	return false;
 }
 
-PLH::ProtFlag PLH::MemAccessor::mem_protect(uint64_t dest, uint64_t size, PLH::ProtFlag prot, bool& status) const {
+SIGILHOOK::ProtFlag SIGILHOOK::MemAccessor::mem_protect(uint64_t dest, uint64_t size, SIGILHOOK::ProtFlag prot, bool& status) const {
 	DWORD orig;
 	status = VirtualProtect((char*)dest, (SIZE_T)size, TranslateProtection(prot), &orig) != 0;
 	return TranslateProtection(orig);
 }
 
-#elif defined(POLYHOOK2_OS_LINUX)
+#elif defined(SIGILHOOK_OS_LINUX)
 
 struct region_t {
 	uint64_t start;
 	uint64_t end;
-	PLH::ProtFlag prot;
+	SIGILHOOK::ProtFlag prot;
 };
 
 static region_t get_region_from_addr(uint64_t addr) {
@@ -68,16 +68,16 @@ static region_t get_region_from_addr(uint64_t addr) {
 
 				++strend;
 				if (strend[0] == 'r')
-					res.prot = res.prot | PLH::ProtFlag::R;
+					res.prot = res.prot | SIGILHOOK::ProtFlag::R;
 
 				if (strend[1] == 'w')
-					res.prot = res.prot | PLH::ProtFlag::W;
+					res.prot = res.prot | SIGILHOOK::ProtFlag::W;
 
 				if (strend[2] == 'x')
-					res.prot = res.prot | PLH::ProtFlag::X;
+					res.prot = res.prot | SIGILHOOK::ProtFlag::X;
 
-				if(res.prot == PLH::ProtFlag::UNSET)
-					res.prot = PLH::ProtFlag::NONE;
+				if(res.prot == SIGILHOOK::ProtFlag::UNSET)
+					res.prot = SIGILHOOK::ProtFlag::NONE;
 
 				break;
 			}
@@ -89,16 +89,16 @@ static region_t get_region_from_addr(uint64_t addr) {
 	return res;
 }
 
-bool PLH::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
+bool SIGILHOOK::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
 	memcpy((char*)dest, (char*)src, (size_t)size);
 	return true;
 }
 
-bool PLH::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
 	region_t region_infos = get_region_from_addr(src);
 
 	// Make sure that the region we query is writable
-	if(!(region_infos.prot & PLH::ProtFlag::W))
+	if(!(region_infos.prot & SIGILHOOK::ProtFlag::W))
 		return false;
 
 	size = std::min<uint64_t>(region_infos.end - src, size);
@@ -109,7 +109,7 @@ bool PLH::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size
 	return true;
 }
 
-bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, size_t &read) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, size_t &read) const noexcept {
 	if (!size) {
 		return false;
 	}
@@ -118,7 +118,7 @@ bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, s
 	size_t readable_size = 0;
 	while (readable_size < size) {
 		const auto region = get_region_from_addr(address_in_region);
-		if (!(region.prot & PLH::ProtFlag::R)) {
+		if (!(region.prot & SIGILHOOK::ProtFlag::R)) {
 			// Stop when encountering an unreadable memory mapping.
 			break;
 		}
@@ -141,7 +141,7 @@ bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, size_t size, s
 	return true;
 }
 
-PLH::ProtFlag PLH::MemAccessor::mem_protect(uint64_t dest, uint64_t size, PLH::ProtFlag prot, bool& status) const {
+SIGILHOOK::ProtFlag SIGILHOOK::MemAccessor::mem_protect(uint64_t dest, uint64_t size, SIGILHOOK::ProtFlag prot, bool& status) const {
 	auto current_address = dest;
 	size_t protected_size = 0;
 	region_t region{};
@@ -169,14 +169,14 @@ PLH::ProtFlag PLH::MemAccessor::mem_protect(uint64_t dest, uint64_t size, PLH::P
 	return region.prot;
 }
 
-#elif defined(POLYHOOK2_OS_APPLE)
+#elif defined(SIGILHOOK_OS_APPLE)
 
-bool PLH::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
+bool SIGILHOOK::MemAccessor::mem_copy(uint64_t dest, uint64_t src, uint64_t size) const {
 	memcpy((char*)dest, (char*)src, (size_t)size);
 	return true;
 }
 
-bool PLH::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size, size_t& written) const noexcept {
 	bool res = memcpy((void*)dest, (void*)src, (size_t)size) != nullptr;
 	if (res)
 		written = size;
@@ -186,7 +186,7 @@ bool PLH::MemAccessor::safe_mem_write(uint64_t dest, uint64_t src, uint64_t size
 	return res;
 }
 
-bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, uint64_t size, size_t& read) const noexcept {
+bool SIGILHOOK::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, uint64_t size, size_t& read) const noexcept {
 	bool res = memcpy((void*)dest, (void*)src, (size_t)size) != nullptr;
 	if (res)
 		read = size;
@@ -196,9 +196,9 @@ bool PLH::MemAccessor::safe_mem_read(uint64_t src, uint64_t dest, uint64_t size,
 	return res;
 }
 
-PLH::ProtFlag PLH::MemAccessor::mem_protect(uint64_t dest, uint64_t size, PLH::ProtFlag prot, bool& status) const {
-	status = mach_vm_protect(mach_task_self(), (mach_vm_address_t)MEMORY_ROUND(dest, PLH::getPageSize()), (mach_vm_size_t)MEMORY_ROUND_UP(size, PLH::getPageSize()), FALSE, TranslateProtection(prot)) == KERN_SUCCESS;
-	return PLH::ProtFlag::R | PLH::ProtFlag::X;
+SIGILHOOK::ProtFlag SIGILHOOK::MemAccessor::mem_protect(uint64_t dest, uint64_t size, SIGILHOOK::ProtFlag prot, bool& status) const {
+	status = mach_vm_protect(mach_task_self(), (mach_vm_address_t)MEMORY_ROUND(dest, SIGILHOOK::getPageSize()), (mach_vm_size_t)MEMORY_ROUND_UP(size, SIGILHOOK::getPageSize()), FALSE, TranslateProtection(prot)) == KERN_SUCCESS;
+	return SIGILHOOK::ProtFlag::R | SIGILHOOK::ProtFlag::X;
 }
 
 #endif

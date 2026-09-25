@@ -1,11 +1,11 @@
-#include "polyhook2/ZydisDisassembler.hpp"
-#include "polyhook2/ErrorLog.hpp"
+#include "sigilhook/ZydisDisassembler.hpp"
+#include "sigilhook/ErrorLog.hpp"
 
-PLH::ZydisDisassembler::ZydisDisassembler(PLH::Mode mode) : m_decoder(new ZydisDecoder()), m_formatter(new ZydisFormatter()) {
+SIGILHOOK::ZydisDisassembler::ZydisDisassembler(SIGILHOOK::Mode mode) : m_decoder(new ZydisDecoder()), m_formatter(new ZydisFormatter()) {
 	m_mode = mode;
 	if (ZYAN_FAILED(ZydisDecoderInit(m_decoder,
-									 (mode == PLH::Mode::x64) ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LONG_COMPAT_32,
-									 (mode == PLH::Mode::x64) ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32))) {
+									 (mode == SIGILHOOK::Mode::x64) ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LONG_COMPAT_32,
+									 (mode == SIGILHOOK::Mode::x64) ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32))) {
 		Log::log("Failed to initialize zydis decoder", ErrorLevel::SEV);
 		return;
 	}
@@ -19,7 +19,7 @@ PLH::ZydisDisassembler::ZydisDisassembler(PLH::Mode mode) : m_decoder(new ZydisD
 	ZydisFormatterSetProperty(m_formatter, ZYDIS_FORMATTER_PROP_FORCE_SIZE, ZYAN_TRUE);
 }
 
-PLH::ZydisDisassembler::~ZydisDisassembler() {
+SIGILHOOK::ZydisDisassembler::~ZydisDisassembler() {
 	if (m_decoder) {
 		delete m_decoder;
 		m_decoder = nullptr;
@@ -31,7 +31,7 @@ PLH::ZydisDisassembler::~ZydisDisassembler() {
 	}
 }
 
-PLH::insts_t PLH::ZydisDisassembler::disassemble(
+SIGILHOOK::insts_t SIGILHOOK::ZydisDisassembler::disassemble(
     uint64_t firstInstruction,
     uint64_t start,
     uint64_t end,
@@ -107,7 +107,7 @@ PLH::insts_t PLH::ZydisDisassembler::disassemble(
 	return insVec;
 }
 
-bool PLH::ZydisDisassembler::getOpStr(ZydisDecodedInstruction* pInstruction, const ZydisDecodedOperand* decoded_operands, uint64_t addr, std::string* pOpStrOut) {
+bool SIGILHOOK::ZydisDisassembler::getOpStr(ZydisDecodedInstruction* pInstruction, const ZydisDecodedOperand* decoded_operands, uint64_t addr, std::string* pOpStrOut) {
 	char buffer[256];
 	if (ZYAN_SUCCESS(ZydisFormatterFormatInstruction(m_formatter, pInstruction, decoded_operands, pInstruction->operand_count, buffer, sizeof(buffer), addr, ZYAN_NULL))) {
 		// remove mnemonic + space (op str is just the right hand side)
@@ -118,7 +118,7 @@ bool PLH::ZydisDisassembler::getOpStr(ZydisDecodedInstruction* pInstruction, con
 	return false;
 }
 
-void PLH::ZydisDisassembler::setDisplacementFields(PLH::Instruction& inst, const ZydisDecodedInstruction* zydisInst, const ZydisDecodedOperand* operands) const {
+void SIGILHOOK::ZydisDisassembler::setDisplacementFields(SIGILHOOK::Instruction& inst, const ZydisDecodedInstruction* zydisInst, const ZydisDecodedOperand* operands) const {
 	inst.setBranching(zydisInst->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE);
 	inst.setCalling(zydisInst->mnemonic == ZydisMnemonic::ZYDIS_MNEMONIC_CALL);
 

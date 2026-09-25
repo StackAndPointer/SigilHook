@@ -1,15 +1,15 @@
-#include "polyhook2/Virtuals/VTableSwapHook.hpp"
-#include "polyhook2/ErrorLog.hpp"
+#include "sigilhook/Virtuals/VTableSwapHook.hpp"
+#include "sigilhook/ErrorLog.hpp"
 
-PLH::VTableSwapHook::VTableSwapHook(const char* Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
+SIGILHOOK::VTableSwapHook::VTableSwapHook(const char* Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
 	: VTableSwapHook((uint64_t)Class, redirectMap, userOrigMap, rttiMode)
 {}
 
-PLH::VTableSwapHook::VTableSwapHook(const uint64_t Class, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
-	: VTableSwapHook(Class, PLH::VFuncMap{ }, userOrigMap, rttiMode)
+SIGILHOOK::VTableSwapHook::VTableSwapHook(const uint64_t Class, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
+	: VTableSwapHook(Class, SIGILHOOK::VFuncMap{ }, userOrigMap, rttiMode)
 {}
 
-PLH::VTableSwapHook::VTableSwapHook(const uint64_t Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
+SIGILHOOK::VTableSwapHook::VTableSwapHook(const uint64_t Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap, VTableRTTIMode rttiMode)
 	: m_newVtable(nullptr)
 	, m_origVtable(nullptr)
 	, m_class(Class)
@@ -19,7 +19,7 @@ PLH::VTableSwapHook::VTableSwapHook(const uint64_t Class, const VFuncMap& redire
 	, m_userOrigMap(userOrigMap)
 {}
 
-bool PLH::VTableSwapHook::hook() {
+bool SIGILHOOK::VTableSwapHook::hook() {
 	assert(m_userOrigMap != nullptr);
 	assert(!m_hooked);
 	if (m_hooked) {
@@ -70,7 +70,7 @@ bool PLH::VTableSwapHook::hook() {
 	return true;
 }
 
-bool PLH::VTableSwapHook::unHook() {
+bool SIGILHOOK::VTableSwapHook::unHook() {
 	assert(m_hooked);
 	if (!m_hooked) {
 		Log::log("vtable unhook failed: no hook present", ErrorLevel::SEV);
@@ -91,7 +91,7 @@ bool PLH::VTableSwapHook::unHook() {
 	return true;
 }
 
-uint16_t PLH::VTableSwapHook::countVFuncs() {
+uint16_t SIGILHOOK::VTableSwapHook::countVFuncs() {
 	uint16_t count = 0;
 	for (;; count++) {
 		// if you have more than 500 vfuncs you have a problem and i don't support you :)

@@ -1,8 +1,8 @@
 #include <Catch.hpp>
-#include "polyhook2/PE/IatHook.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/PE/IatHook.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
 EffectTracker iatEffectTracker;
 
@@ -16,10 +16,10 @@ NOINLINE DWORD __stdcall hkGetCurrentThreadId() {
 
 TEST_CASE("Iat Hook Tests", "[IatHook]") {
 	SECTION("Verify api thunk is found and hooked") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 		volatile DWORD thrdId2 = GetCurrentThreadId();
 		UNREFERENCED_PARAMETER(thrdId2);
-		PLH::IatHook hook("kernel32.dll", "GetCurrentThreadId", (char*)&hkGetCurrentThreadId, (uint64_t*)&oGetCurrentThreadID, L"");
+		SIGILHOOK::IatHook hook("kernel32.dll", "GetCurrentThreadId", (char*)&hkGetCurrentThreadId, (uint64_t*)&oGetCurrentThreadID, L"");
 		REQUIRE(hook.hook());
 		
 		iatEffectTracker.PushEffect();
@@ -31,8 +31,8 @@ TEST_CASE("Iat Hook Tests", "[IatHook]") {
 	}
 
 	SECTION("Verify api thunk is found and hooked when module explicitly named") {
-		PLH::StackCanary canary;
-		PLH::IatHook hook("kernel32.dll", "GetCurrentThreadId", (char*)&hkGetCurrentThreadId, (uint64_t*)&oGetCurrentThreadID, L"polyhook_2.exe");
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::IatHook hook("kernel32.dll", "GetCurrentThreadId", (char*)&hkGetCurrentThreadId, (uint64_t*)&oGetCurrentThreadID, L"SigilHook.exe");
 		REQUIRE(hook.hook());
 
 		iatEffectTracker.PushEffect();

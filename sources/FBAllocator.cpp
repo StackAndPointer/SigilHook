@@ -1,5 +1,5 @@
-#include "polyhook2/FBAllocator.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/FBAllocator.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
 void* ALLOC_NewBlock(ALLOC_Allocator* alloc);
 void ALLOC_Push(ALLOC_Allocator* alloc, void* pBlock);

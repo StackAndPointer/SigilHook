@@ -1,11 +1,11 @@
 #include <Catch.hpp>
 
-#include "polyhook2/Detour/ILCallback.hpp"
+#include "sigilhook/Detour/ILCallback.hpp"
 
 #pragma warning( disable : 4244)
 
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 /**These tests can spontaneously fail if the compiler desides to optimize away
 the handler or inline the function. NOINLINE attempts to fix the latter, the former
@@ -15,10 +15,10 @@ or releasewithdebinfo mode (relwithdebinfo optimizes sliiiightly less)**/
 
 EffectTracker effectsNTD64;
 
-#include "polyhook2/Detour/x64Detour.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
 
 NOINLINE void hookMeInt(int a) {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     volatile int var = 1;
     int var2 = var + a;
 
@@ -34,14 +34,14 @@ NOINLINE void hookMeInt(int a) {
 }
 
 NOINLINE void hookMeFloat(float a) {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     float ans = 1.0f;
     ans += a;
     printf("%f %f\n", ans, a);
 }
 
 NOINLINE void hookMeIntFloatDouble(int a, float b, double c) {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -50,9 +50,9 @@ NOINLINE void hookMeIntFloatDouble(int a, float b, double c) {
 }
 
 NOINLINE void
-myCallback(const PLH::ILCallback::Parameters* p, const uint8_t count, const PLH::ILCallback::ReturnValue* retVal) {
-    PH_UNUSED(retVal);
-    PLH::StackCanary canary;
+myCallback(const SIGILHOOK::ILCallback::Parameters* p, const uint8_t count, const SIGILHOOK::ILCallback::ReturnValue* retVal) {
+    SIGILHOOK_UNUSED(retVal);
+    SIGILHOOK::StackCanary canary;
 
     printf("Argument Count: %d\n", count);
     for (int i = 0; i < count; i++) {
@@ -69,16 +69,16 @@ myCallback(const PLH::ILCallback::Parameters* p, const uint8_t count, const PLH:
 }
 
 TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
-    PLH::ILCallback callback;
+    SIGILHOOK::ILCallback callback;
     SECTION("Integer argument") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         asmjit::FuncSignature sig{ asmjit::FuncSignature::build<void, int>() };
         sig.setCallConvId(asmjit::CallConvId::kX64Windows);
         uint64_t JIT = callback.getJitFunc(sig, asmjit::Arch::kHost, &myCallback);
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &hookMeInt, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMeInt, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();
@@ -88,12 +88,12 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
     }
 
     SECTION("Floating argument") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         uint64_t JIT = callback.getJitFunc("void", {"float"}, asmjit::Arch::kHost, &myCallback);
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &hookMeFloat, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMeFloat, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();
@@ -103,12 +103,12 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
     }
 
     SECTION("Int, float, double arguments, string parsing types") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, asmjit::Arch::kHost, &myCallback);
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &hookMeIntFloatDouble, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &hookMeIntFloatDouble, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();
@@ -120,8 +120,8 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
 
 
 NOINLINE void rw(int a, float b, double c, int type) {
-    PH_UNUSED(type);
-    PLH::StackCanary canary;
+    SIGILHOOK_UNUSED(type);
+    SIGILHOOK::StackCanary canary;
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -133,8 +133,8 @@ NOINLINE void rw(int a, float b, double c, int type) {
 }
 
 NOINLINE float rw_float(int a, float b, double c, int type) {
-    PH_UNUSED(type);
-    PLH::StackCanary canary;
+    SIGILHOOK_UNUSED(type);
+    SIGILHOOK::StackCanary canary;
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -147,8 +147,8 @@ NOINLINE float rw_float(int a, float b, double c, int type) {
 }
 
 NOINLINE double rw_double(int a, float b, double c, int type) {
-    PH_UNUSED(type);
-    PLH::StackCanary canary;
+    SIGILHOOK_UNUSED(type);
+    SIGILHOOK::StackCanary canary;
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -162,8 +162,8 @@ NOINLINE double rw_double(int a, float b, double c, int type) {
 
 // TODO: Delete unused function?
 NOINLINE int rw_int(int a, float b, double c, int type) {
-    PH_UNUSED(type);
-    PLH::StackCanary canary;
+    SIGILHOOK_UNUSED(type);
+    SIGILHOOK::StackCanary canary;
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -176,11 +176,11 @@ NOINLINE int rw_int(int a, float b, double c, int type) {
 }
 
 NOINLINE void mySecondCallback(
-    const PLH::ILCallback::Parameters* p,
+    const SIGILHOOK::ILCallback::Parameters* p,
     const uint8_t count,
-    const PLH::ILCallback::ReturnValue* retVal
+    const SIGILHOOK::ILCallback::ReturnValue* retVal
 ) {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     printf("Argument Count: %d\n", count);
     for (int i = 0; i < count; i++) {
         printf("Arg: %d asInt:%d asFloat:%f asDouble:%f\n", i, p->getArg<int>(i), p->getArg<float>(i),
@@ -208,20 +208,21 @@ NOINLINE void mySecondCallback(
             break;
         default: printf("Unknown Mode, NOT modifying ret val!\n");
     }
+    const_cast<SIGILHOOK::ILCallback::ReturnValue*>(retVal)->m_overrideReturn = 1;
 }
 
 TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
-    PLH::ILCallback callback;
+    SIGILHOOK::ILCallback callback;
 
     SECTION("Int, float, double arguments host") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         uint64_t JIT = callback.getJitFunc(
             "void", {"int", "float", "double", "int"}, asmjit::Arch::kHost, &mySecondCallback
         );
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &rw, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &rw, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();
@@ -231,14 +232,14 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
     }
 
     SECTION("Int, float, double arguments, float ret, host") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         uint64_t JIT = callback.getJitFunc(
             "float", {"int", "float", "double", "int"}, asmjit::Arch::kHost, &mySecondCallback
         );
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &rw_float, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &rw_float, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();
@@ -249,14 +250,14 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
     }
 
     SECTION("Int, float, double arguments, double ret, host") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
         uint64_t JIT = callback.getJitFunc(
             "double", {"int", "float", "double", "int"}, asmjit::Arch::kHost, &mySecondCallback
         );
         REQUIRE(JIT != 0);
 
-        PLH::ZydisDisassembler dis(PLH::Mode::x64);
-        PLH::x64Detour detour((uint64_t) &rw_double, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::ZydisDisassembler dis(SIGILHOOK::Mode::x64);
+        SIGILHOOK::x64Detour detour((uint64_t) &rw_double, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD64.PushEffect();

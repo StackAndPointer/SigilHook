@@ -1,13 +1,13 @@
-#include "polyhook2/Exceptions/AVehHook.hpp"
+#include "sigilhook/Exceptions/AVehHook.hpp"
 
-PLH::RefCounter PLH::AVehHook::m_refCount;
-void* PLH::AVehHook::m_hHandler;
-std::unordered_set<PLH::AVehHookImpEntry> PLH::AVehHook::m_impls;
-PLH::eException PLH::AVehHook::m_onException;
-PLH::eException PLH::AVehHook::m_onUnhandledException;
+SIGILHOOK::RefCounter SIGILHOOK::AVehHook::m_refCount;
+void* SIGILHOOK::AVehHook::m_hHandler;
+std::unordered_set<SIGILHOOK::AVehHookImpEntry> SIGILHOOK::AVehHook::m_impls;
+SIGILHOOK::eException SIGILHOOK::AVehHook::m_onException;
+SIGILHOOK::eException SIGILHOOK::AVehHook::m_onUnhandledException;
 
 // https://reverseengineering.stackexchange.com/questions/14992/what-are-the-vectored-continue-handlers
-PLH::AVehHook::AVehHook() {
+SIGILHOOK::AVehHook::AVehHook() {
 	if (m_refCount.m_count == 0) {
 		m_hHandler = AddVectoredExceptionHandler(1, &AVehHook::Handler);
 		if (m_hHandler == NULL) {
@@ -18,7 +18,7 @@ PLH::AVehHook::AVehHook() {
 	m_refCount.m_count++;
 }
 
-PLH::AVehHook::~AVehHook() {
+SIGILHOOK::AVehHook::~AVehHook() {
 	assert(m_refCount.m_count >= 1);
 
 	m_refCount.m_count--;
@@ -32,15 +32,15 @@ PLH::AVehHook::~AVehHook() {
 	}
 }
 
-PLH::eException& PLH::AVehHook::EventException() {
+SIGILHOOK::eException& SIGILHOOK::AVehHook::EventException() {
 	return m_onException;
 }
 
-PLH::eException& PLH::AVehHook::EventUnhandledException() {
+SIGILHOOK::eException& SIGILHOOK::AVehHook::EventUnhandledException() {
 	return m_onUnhandledException;
 }
 
-LONG CALLBACK PLH::AVehHook::Handler(EXCEPTION_POINTERS* ExceptionInfo) {
+LONG CALLBACK SIGILHOOK::AVehHook::Handler(EXCEPTION_POINTERS* ExceptionInfo) {
 	DWORD ExceptionCode = ExceptionInfo->ExceptionRecord->ExceptionCode;
 	uint64_t ip = ExceptionInfo->ContextRecord->XIP;
 

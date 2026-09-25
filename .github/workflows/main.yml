@@ -53,7 +53,7 @@ jobs:
 
           # Linux
           - os: ubuntu-latest
-            test_bin_path: PolyHook_2
+            test_bin_path: SigilHook_2
 
           - os: ubuntu-latest
             bitness: 32
@@ -94,7 +94,7 @@ jobs:
         # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
         run: >
           cmake -B ${{ env.BUILD_DIR }}
-          -DPOLYHOOK_BUILD_DLL="ON"
+          -DSIGILHOOK_BUILD_DLL="ON"
           -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -108,11 +108,11 @@ jobs:
       - name: Configure CMake for test
         run: >
           cmake -B ${{ env.BUILD_DIR }}
-          -DPOLYHOOK_BUILD_DLL="OFF"
+          -DSIGILHOOK_BUILD_DLL="OFF"
 
       - name: Build tests
         id: build-tests
-        if: ${{ matrix.c_compiler != 'gcc' }} # See PLH_TEST_CALLBACK in TestUtils.hpp for the reason
+        if: ${{ matrix.c_compiler != 'gcc' }} # See SIGILHOOK_TEST_CALLBACK in TestUtils.hpp for the reason
         run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }} --target SigilHook
 
       - name: Run tests

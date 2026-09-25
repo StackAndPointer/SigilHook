@@ -2,9 +2,9 @@
 
 #include <Catch.hpp>
 
-#include "polyhook2/Virtuals/VFuncSwapHook.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Virtuals/VFuncSwapHook.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 EffectTracker vFuncSwapEffects;
 
@@ -23,15 +23,15 @@ public:
 
 #pragma warning(disable: 4100)
 
-PLH::VFuncMap origVFuncs2;
+SIGILHOOK::VFuncMap origVFuncs2;
 HOOK_CALLBACK(&VirtualTest2::NoParamVirt, hkVirtNoParams2, {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	vFuncSwapEffects.PeakEffect().trigger();
 	return ((hkVirtNoParams2_t)origVFuncs2.at(1))(_args...);
 });
 
 HOOK_CALLBACK(&VirtualTest2::NoParamVirt2, hkVirt2NoParams2, {
-	PLH::StackCanary canary;
+	SIGILHOOK::StackCanary canary;
 	vFuncSwapEffects.PeakEffect().trigger();
 	return ((hkVirtNoParams2_t)origVFuncs2.at(2))(_args...);
 });
@@ -40,9 +40,9 @@ TEST_CASE("VFuncSwap tests", "[VFuncSwap]") {
 	std::shared_ptr<VirtualTest2> ClassToHook(new VirtualTest2);
 
 	SECTION("Verify vfunc redirected") {
-		PLH::StackCanary canary;
-		PLH::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams2}};
-		PLH::VFuncSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs2);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams2}};
+		SIGILHOOK::VFuncSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs2);
 		REQUIRE(hook.hook());
 		REQUIRE(origVFuncs2.size() == 1);
 
@@ -53,9 +53,9 @@ TEST_CASE("VFuncSwap tests", "[VFuncSwap]") {
 	}
 
 	SECTION("Verify multiple vfunc redirected") {
-		PLH::StackCanary canary;
-		PLH::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams2},{(uint16_t)2, (uint64_t)hkVirt2NoParams2}};
-		PLH::VFuncSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs2);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams2},{(uint16_t)2, (uint64_t)hkVirt2NoParams2}};
+		SIGILHOOK::VFuncSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs2);
 		REQUIRE(hook.hook());
 		REQUIRE(origVFuncs2.size() == 2);
 

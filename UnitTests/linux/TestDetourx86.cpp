@@ -3,10 +3,10 @@
 
 #include <Catch.hpp>
 
-#include "polyhook2/Detour/x86Detour.hpp"
+#include "sigilhook/Detour/x86Detour.hpp"
 
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 #include "../TestUtils.hpp"
 
@@ -29,7 +29,7 @@ NOINLINE int __cdecl hookMe1() {
 	return var;
 }
 
-PLH_TEST_DETOUR_CALLBACK(hookMe1, {
+SIGILHOOK_TEST_DETOUR_CALLBACK(hookMe1, {
 	std::cout << "Hook 1 Called! Trampoline: 0x" << std::hex << hookMe1_trmp << std::endl;
 });
 
@@ -51,8 +51,8 @@ unsigned char hookMe2[] = {
 
 uint64_t nullTramp = 0;
 NOINLINE void h_nullstub() {
-	PLH::StackCanary canary;
-	PLH_STOP_OPTIMIZATIONS();
+	SIGILHOOK::StackCanary canary;
+	SIGILHOOK_STOP_OPTIMIZATIONS();
 }
 
 unsigned char hookMe3[] = {
@@ -91,7 +91,7 @@ unsigned char hookMe5[] = {
 	0xc2, 0x14, 0x00						  // retn 0x14
 };
 
-NOINLINE void PH_ATTR_NAKED hookMeLoop() {
+NOINLINE void SIGILHOOK_ATTR_NAKED hookMeLoop() {
 	asm("xor %eax, %eax;\n"
 		"START: inc %eax;\n"
 		"cmp $5, %eax;\n"
@@ -99,22 +99,22 @@ NOINLINE void PH_ATTR_NAKED hookMeLoop() {
 		"ret;");
 }
 
-extern "C" NOINLINE uintptr_t PH_ATTR_NAKED returnESP() {
+extern "C" NOINLINE uintptr_t SIGILHOOK_ATTR_NAKED returnESP() {
 	__asm__ __volatile__ (
 		"movl (%esp), %eax\n"
 		"ret"
 	);
 }
 
-NOINLINE uintptr_t PH_ATTR_NAKED readESP() {
+NOINLINE uintptr_t SIGILHOOK_ATTR_NAKED readESP() {
 	__asm__ __volatile__ (
 		"call returnESP\n"
 		"ret"
 	);
 }
-PLH_TEST_DETOUR_CALLBACK(readESP);
+SIGILHOOK_TEST_DETOUR_CALLBACK(readESP);
 
-NOINLINE uintptr_t PH_ATTR_NAKED inlineReadESP() {
+NOINLINE uintptr_t SIGILHOOK_ATTR_NAKED inlineReadESP() {
 	__asm__ __volatile__ (
 		"call 0f\n"
 		"0: pop %%eax\n"
@@ -122,11 +122,11 @@ NOINLINE uintptr_t PH_ATTR_NAKED inlineReadESP() {
 		::: "eax"
 	);
 }
-PLH_TEST_DETOUR_CALLBACK(inlineReadESP);
+SIGILHOOK_TEST_DETOUR_CALLBACK(inlineReadESP);
 
-PLH_TEST_DETOUR_CALLBACK(hookMeLoop);
+SIGILHOOK_TEST_DETOUR_CALLBACK(hookMeLoop);
 
-// PLH_TEST_DETOUR_CALLBACK doesn't support variadic functions yet.
+// SIGILHOOK_TEST_DETOUR_CALLBACK doesn't support variadic functions yet.
 uint64_t hookPrintfTramp = 0;
 NOINLINE int h_hookPrintf(const char *format, ...) {
 	char buffer[512];
@@ -138,36 +138,36 @@ NOINLINE int h_hookPrintf(const char *format, ...) {
 	const std::string message = {buffer, static_cast<size_t>(written)};
 
 	effects.PeakEffect().trigger();
-	return PLH::FnCast(hookPrintfTramp, &printf)("INTERCEPTED YO:%s", message.c_str());
+	return SIGILHOOK::FnCast(hookPrintfTramp, &printf)("INTERCEPTED YO:%s", message.c_str());
 }
 
 // must specify specific overload of std::pow by assigning to pFn of type
 const auto &pow_double = std::pow<double, double>;
-PLH_TEST_DETOUR_CALLBACK(pow_double);
+SIGILHOOK_TEST_DETOUR_CALLBACK(pow_double);
 
-PLH_TEST_DETOUR_CALLBACK(malloc);
+SIGILHOOK_TEST_DETOUR_CALLBACK(malloc);
 
 #include <sys/socket.h>
-PLH_TEST_DETOUR_CALLBACK(recv);
+SIGILHOOK_TEST_DETOUR_CALLBACK(recv);
 
 TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
-	PLH::test::registerTestLogger();
+	SIGILHOOK::test::registerTestLogger();
 
 	SECTION("Normal function") {
-		PLH::StackCanary canary;
-		PLH::x86Detour PLH_TEST_DETOUR(hookMe1);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(hookMe1);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
 		volatile auto result = hookMe1();
-		PH_UNUSED(result);
+		SIGILHOOK_UNUSED(result);
 		REQUIRE(effects.PopEffect().didExecute());
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Normal function rehook") {
-		PLH::StackCanary canary;
-		PLH::x86Detour PLH_TEST_DETOUR(hookMe1);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(hookMe1);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -179,32 +179,32 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 	}
 
 	SECTION("Jmp into prologue w/ src in range") {
-		PLH::x86Detour detour((uint64_t)&hookMe2, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::x86Detour detour((uint64_t)&hookMe2, (uint64_t)&h_nullstub, &nullTramp);
 
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Jmp into prologue w/ src out of range") {
-		PLH::x86Detour detour((uint64_t)&hookMe3, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::x86Detour detour((uint64_t)&hookMe3, (uint64_t)&h_nullstub, &nullTramp);
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Test instruction in prologue") {
-		PLH::x86Detour detour((uint64_t)&hookMe4, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::x86Detour detour((uint64_t)&hookMe4, (uint64_t)&h_nullstub, &nullTramp);
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Call with fs base") {
-		PLH::x86Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
+		SIGILHOOK::x86Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
 		REQUIRE(detour.hook() == true);
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Loop") {
-		PLH::x86Detour PLH_TEST_DETOUR(hookMeLoop);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(hookMeLoop);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -214,25 +214,25 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 	}
 
 	SECTION("Test #215 (call to routine returning ESP)") {
-		PLH::x86Detour PLH_TEST_DETOUR(readESP);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(readESP);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
 		const auto esp = readESP();
 		REQUIRE(esp == (uintptr_t)readESP + JUMP_SIZE);
-		REQUIRE(detour.hasDiagnostic(PLH::Diagnostic::FixedCallToRoutineReadingSP));
+		REQUIRE(detour.hasDiagnostic(SIGILHOOK::Diagnostic::FixedCallToRoutineReadingSP));
 		REQUIRE(effects.PopEffect().didExecute());
 		REQUIRE(detour.unHook() == true);
 	}
 
 	SECTION("Test #217 (inline call to read ESP)") {
-		PLH::x86Detour PLH_TEST_DETOUR(inlineReadESP);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(inlineReadESP);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
 		const auto esp = inlineReadESP();
 		REQUIRE(esp == (uintptr_t)inlineReadESP + JUMP_SIZE);
-		REQUIRE(detour.hasDiagnostic(PLH::Diagnostic::FixedInlineCallToReadSP));
+		REQUIRE(detour.hasDiagnostic(SIGILHOOK::Diagnostic::FixedInlineCallToReadSP));
 		REQUIRE(effects.PopEffect().didExecute());
 		REQUIRE(detour.unHook() == true);
 	}
@@ -246,7 +246,7 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 	// ^ what pun? nothing found on the web >.<
 	SECTION("hook pow") {
 
-		PLH::x86Detour PLH_TEST_DETOUR(pow_double);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(pow_double);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();
@@ -258,7 +258,7 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 #endif
 
 	SECTION("hook malloc") {
-		PLH::x86Detour PLH_TEST_DETOUR(malloc);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(malloc);
 		effects.PushEffect(); // catch does some allocations, push effect first so peak works
 		REQUIRE(detour.hook() == true);
 
@@ -269,12 +269,12 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 	}
 
 	SECTION("hook recv") {
-		PLH::x86Detour PLH_TEST_DETOUR(recv);
+		SIGILHOOK::x86Detour SIGILHOOK_TEST_DETOUR(recv);
 		REQUIRE(detour.hook() == true);
 	}
 
 	SECTION("hook printf") {
-		PLH::x86Detour detour((uint64_t)&printf, (uint64_t)h_hookPrintf, &hookPrintfTramp);
+		SIGILHOOK::x86Detour detour((uint64_t)&printf, (uint64_t)h_hookPrintf, &hookPrintfTramp);
 		REQUIRE(detour.hook() == true);
 
 		effects.PushEffect();

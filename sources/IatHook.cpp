@@ -1,10 +1,10 @@
-#include "polyhook2/PE/IatHook.hpp"
+#include "sigilhook/PE/IatHook.hpp"
 
-PLH::IatHook::IatHook(const std::string& dllName, const std::string& apiName, const char* fnCallback, uint64_t* userOrigVar, const std::wstring& moduleName) 
+SIGILHOOK::IatHook::IatHook(const std::string& dllName, const std::string& apiName, const char* fnCallback, uint64_t* userOrigVar, const std::wstring& moduleName)
 	: IatHook(dllName, apiName, (uint64_t)fnCallback, userOrigVar, moduleName)
 {}
 
-PLH::IatHook::IatHook(const std::string& dllName, const std::string& apiName, const uint64_t fnCallback, uint64_t* userOrigVar, const std::wstring& moduleName) 
+SIGILHOOK::IatHook::IatHook(const std::string& dllName, const std::string& apiName, const uint64_t fnCallback, uint64_t* userOrigVar, const std::wstring& moduleName)
 	: m_dllName(dllName)
     , m_apiName(apiName)
     , m_moduleName(moduleName)
@@ -13,7 +13,7 @@ PLH::IatHook::IatHook(const std::string& dllName, const std::string& apiName, co
 	, m_origFunc(0)
 {}
 
-bool PLH::IatHook::hook() {
+bool SIGILHOOK::IatHook::hook() {
 	assert(m_userOrigVar != nullptr);
 	IMAGE_THUNK_DATA* pThunk = FindIatThunk(m_dllName, m_apiName, m_moduleName);
 	if (pThunk == nullptr)
@@ -28,7 +28,7 @@ bool PLH::IatHook::hook() {
 	return true;
 }
 
-bool PLH::IatHook::unHook() {
+bool SIGILHOOK::IatHook::unHook() {
 	assert(m_userOrigVar != nullptr);
 	assert(m_hooked);
 	if (!m_hooked)
@@ -45,7 +45,7 @@ bool PLH::IatHook::unHook() {
 	return true;
 }
 
-IMAGE_THUNK_DATA* PLH::IatHook::FindIatThunk(const std::string& dllName, const std::string& apiName, const std::wstring& moduleName /* = L"" */) {
+IMAGE_THUNK_DATA* SIGILHOOK::IatHook::FindIatThunk(const std::string& dllName, const std::string& apiName, const std::wstring& moduleName /* = L"" */) {
 #if defined(_WIN64)
 	PEB* peb = (PPEB)__readgsqword(0x60);
 #else
@@ -77,7 +77,7 @@ IMAGE_THUNK_DATA* PLH::IatHook::FindIatThunk(const std::string& dllName, const s
 	return nullptr;
 }
 
-IMAGE_THUNK_DATA* PLH::IatHook::FindIatThunkInModule(void* moduleBase, const std::string& dllName, const std::string& apiName) {
+IMAGE_THUNK_DATA* SIGILHOOK::IatHook::FindIatThunkInModule(void* moduleBase, const std::string& dllName, const std::string& apiName) {
 	assert(moduleBase != nullptr);
 	if (moduleBase == nullptr)
 		return nullptr;
@@ -98,7 +98,7 @@ IMAGE_THUNK_DATA* PLH::IatHook::FindIatThunkInModule(void* moduleBase, const std
         if(my_narrow_stricmp(RVA2VA(PCHAR, moduleBase, pImports[i].Name),
                              dllName.c_str()) != 0)
 			continue;
-		
+
 		// Original holds the API Names
         auto pOriginalThunk = (PIMAGE_THUNK_DATA)
 			RVA2VA(uintptr_t, moduleBase, pImports[i].OriginalFirstThunk);

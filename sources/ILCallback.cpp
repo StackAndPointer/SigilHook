@@ -1,21 +1,29 @@
-#include "polyhook2/Detour/ILCallback.hpp"
-#include "polyhook2/MemProtector.hpp"
+// SPDX-License-Identifier: MIT
+// Derived from PolyHook 2; see LICENSE and THIRD_PARTY_NOTICES.md.
+#include "sigilhook/Detour/ILCallback.hpp"
 
-asmjit::CallConvId PLH::ILCallback::getCallConv(const std::string& conv) {
+#include "sigilhook/MemProtector.hpp"
+
+#include <algorithm>
+#include <cstddef>
+#include <new>
+#include <utility>
+
+asmjit::CallConvId SIGILHOOK::ILCallback::getCallConv(const std::string& conv) {
 	if (conv == "cdecl") {
 		return asmjit::CallConvId::kCDecl;
-	}else if (conv == "stdcall") {
+	} else if (conv == "stdcall") {
 		return asmjit::CallConvId::kStdCall;
-	}else if (conv == "fastcall") {
+	} else if (conv == "fastcall") {
 		return asmjit::CallConvId::kFastCall;
-	} 
+	}
 	return asmjit::CallConvId::kCDecl;
 }
 
 #define TYPEID_MATCH_STR_IF(var, T) if (var == #T) { return asmjit::TypeId(asmjit::TypeUtils::TypeIdOfT<T>::kTypeId); }
-#define TYPEID_MATCH_STR_ELSEIF(var, T)  else if (var == #T) { return asmjit::TypeId(asmjit::TypeUtils::TypeIdOfT<T>::kTypeId); }
+#define TYPEID_MATCH_STR_ELSEIF(var, T) else if (var == #T) { return asmjit::TypeId(asmjit::TypeUtils::TypeIdOfT<T>::kTypeId); }
 
-asmjit::TypeId PLH::ILCallback::getTypeId(const std::string& type) {
+asmjit::TypeId SIGILHOOK::ILCallback::getTypeId(const std::string& type) const {
 	if (type.find('*') != std::string::npos) {
 		return asmjit::TypeId::kUIntPtr;
 	}
@@ -28,10 +36,10 @@ asmjit::TypeId PLH::ILCallback::getTypeId(const std::string& type) {
 	TYPEID_MATCH_STR_ELSEIF(type, unsigned int)
 	TYPEID_MATCH_STR_ELSEIF(type, long)
 	TYPEID_MATCH_STR_ELSEIF(type, unsigned long)
-	#ifdef POLYHOOK2_OS_WINDOWS
+#ifdef SIGILHOOK_OS_WINDOWS
 	TYPEID_MATCH_STR_ELSEIF(type, __int64)
 	TYPEID_MATCH_STR_ELSEIF(type, unsigned __int64)
-	#endif
+#endif
 	TYPEID_MATCH_STR_ELSEIF(type, long long)
 	TYPEID_MATCH_STR_ELSEIF(type, unsigned long long)
 	TYPEID_MATCH_STR_ELSEIF(type, char)
@@ -42,8 +50,8 @@ asmjit::TypeId PLH::ILCallback::getTypeId(const std::string& type) {
 	TYPEID_MATCH_STR_ELSEIF(type, int8_t)
 	TYPEID_MATCH_STR_ELSEIF(type, uint16_t)
 	TYPEID_MATCH_STR_ELSEIF(type, int16_t)
-	TYPEID_MATCH_STR_ELSEIF(type, int32_t)
 	TYPEID_MATCH_STR_ELSEIF(type, uint32_t)
+	TYPEID_MATCH_STR_ELSEIF(type, int32_t)
 	TYPEID_MATCH_STR_ELSEIF(type, uint64_t)
 	TYPEID_MATCH_STR_ELSEIF(type, int64_t)
 	TYPEID_MATCH_STR_ELSEIF(type, float)
@@ -52,214 +60,255 @@ asmjit::TypeId PLH::ILCallback::getTypeId(const std::string& type) {
 	TYPEID_MATCH_STR_ELSEIF(type, void)
 	else if (type == "intptr_t") {
 		return asmjit::TypeId::kIntPtr;
-	}else if (type == "uintptr_t") {
+	} else if (type == "uintptr_t") {
 		return asmjit::TypeId::kUIntPtr;
-	} 
+	}
 
 	return asmjit::TypeId::kVoid;
 }
 
-uint64_t PLH::ILCallback::getJitFunc(const asmjit::FuncSignature& sig, const asmjit::Arch arch, const PLH::ILCallback::tUserCallback callback) {;
-	/*AsmJit is smart enough to track register allocations and will forward
-	  the proper registers the right values and fixup any it dirtied earlier.
-	  This can only be done if it knows the signature, and ABI, so we give it 
-	  them. It also only does this mapping for calls, so we need to generate 
-	  calls on our boundaries of transfers when we want argument order correct
-	  (ABI stuff is managed for us when calling C code within this project via host mode).
-	  It also does stack operations for us including alignment, shadow space, and
-	  arguments, everything really. Manual stack push/pop is not supported using
-	  the AsmJit compiler, so we must create those nodes, and insert them into
-	  the Node list manually to not corrupt the compiler's tracking of things.
+uint8_t SIGILHOOK::ILCallback::getTypeWidth(const std::string& type) const {
+	const asmjit::TypeId typeId = getTypeId(type);
+	return typeId == asmjit::TypeId::kVoid ? 0 : static_cast<uint8_t>(asmjit::TypeUtils::sizeOf(typeId));
+}
 
-	  Inside the compiler, before endFunc only virtual registers may be used. Any
-	  concrete physical registers will not have their liveness tracked, so will
-	  be spoiled and must be manually marked dirty. After endFunc ONLY concrete
-	  physical registers may be inserted as nodes.
-	*/
-	asmjit::CodeHolder code;        
+uint64_t SIGILHOOK::ILCallback::getJitFunc(
+	const asmjit::FuncSignature& sig,
+	const asmjit::Arch arch,
+	const SIGILHOOK::ILCallback::tUserCallback callback) {
+	if (m_callbackBuf != 0) {
+		Log::log("ILCallback JIT stub already exists", ErrorLevel::SEV);
+		return 0;
+	}
+	if (callback == nullptr) {
+		Log::log("ILCallback requires a callback", ErrorLevel::SEV);
+		return 0;
+	}
+
+	asmjit::CodeHolder code;
 	auto env = asmjit::Environment::host();
 	env.setArch(arch);
-	code.init(env);
-	
-	// initialize function
-	asmjit::x86::Compiler cc(&code);            
-	asmjit::FuncNode* func = cc.addFunc(sig);              
+	const asmjit::Error initError = code.init(env);
+	if (initError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback CodeHolder init failed: ") + asmjit::DebugUtils::errorAsString(initError), ErrorLevel::SEV);
+		return 0;
+	}
+
+	asmjit::x86::Compiler cc(&code);
+	asmjit::FuncNode* func = cc.addFunc(sig);
 
 	asmjit::StringLogger log;
-	auto kFormatFlags =
-		  asmjit::FormatFlags::kMachineCode | asmjit::FormatFlags::kExplainImms | asmjit::FormatFlags::kRegCasts
-		| asmjit::FormatFlags::kHexImms     | asmjit::FormatFlags::kHexOffsets  | asmjit::FormatFlags::kPositions;
-	
-	log.addFlags(kFormatFlags);
+	auto formatFlags =
+		asmjit::FormatFlags::kMachineCode | asmjit::FormatFlags::kExplainImms | asmjit::FormatFlags::kRegCasts |
+		asmjit::FormatFlags::kHexImms | asmjit::FormatFlags::kHexOffsets | asmjit::FormatFlags::kPositions;
+	log.addFlags(formatFlags);
 	code.setLogger(&log);
-	
-	// too small to really need it
-	func->frame().resetPreservedFP();
-	
-	// map argument slots to registers, following abi.
-	std::vector<asmjit::x86::Reg> argRegisters;
-	for (uint8_t argIdx = 0; argIdx < sig.argCount(); argIdx++) {
-		const auto argType = sig.args()[argIdx];
 
+	func->frame().resetPreservedFP();
+
+	std::vector<asmjit::x86::Reg> argRegisters;
+	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
+		const asmjit::TypeId argType = sig.args()[argIndex];
 		asmjit::x86::Reg arg;
 		if (isGeneralReg(argType)) {
-			arg = cc.newUIntPtr();
+			arg = cc.newGp(argType);
 		} else if (isXmmReg(argType)) {
 			arg = cc.newXmm();
 		} else {
-			Log::log("Parameters wider than 64bits not supported", ErrorLevel::SEV);
+			Log::log("Parameters wider than 64 bits are not supported", ErrorLevel::SEV);
 			return 0;
 		}
-
-		func->setArg(argIdx, arg);
+		func->setArg(argIndex, arg);
 		argRegisters.push_back(arg);
 	}
-  
-	// setup the stack structure to hold arguments for user callback
-	uint32_t stackSize = (uint32_t)(sizeof(uint64_t) * sig.argCount());
+
+	const uint32_t stackSize = static_cast<uint32_t>(
+		sizeof(uint64_t) * (std::max)(size_t{1}, static_cast<size_t>(sig.argCount())));
 	argsStack = cc.newStack(stackSize, 16);
-	asmjit::x86::Mem argsStackIdx(argsStack);               
+	asmjit::x86::Mem argsStackIndex(argsStack);
+	asmjit::x86::Gp argOffset = cc.newUIntPtr();
+	argsStackIndex.setIndex(argOffset);
+	argsStackIndex.setSize(sizeof(uint64_t));
 
-	// assigns some register as index reg 
-	asmjit::x86::Gp i = cc.newUIntPtr();
-
-	// stackIdx <- stack[i].
-	argsStackIdx.setIndex(i);                   
-
-	// r/w are sizeof(uint64_t) width now
-	argsStackIdx.setSize(sizeof(uint64_t));
-	
-	// set i = 0
-	cc.mov(i, 0);
-	//// mov from arguments registers into the stack structure
-	for (uint8_t argIdx = 0; argIdx < sig.argCount(); argIdx++) {
-		const auto argType = sig.args()[argIdx];
-
-		// have to cast back to explicit register types to gen right mov type
+	cc.mov(argOffset, 0);
+	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
+		const asmjit::TypeId argType = sig.args()[argIndex];
 		if (isGeneralReg(argType)) {
-			cc.mov(argsStackIdx, argRegisters.at(argIdx).as<asmjit::x86::Gp>());
-		} else if(isXmmReg(argType)) {
-			cc.movq(argsStackIdx, argRegisters.at(argIdx).as<asmjit::x86::Vec>());
+			cc.mov(argsStackIndex, argRegisters[argIndex].as<asmjit::x86::Gp>());
 		} else {
-			Log::log("Parameters wider than 64bits not supported", ErrorLevel::SEV);
-			return 0;
+			cc.movq(argsStackIndex, argRegisters[argIndex].as<asmjit::x86::Vec>());
 		}
-
-		// next structure slot (+= sizeof(uint64_t))
-		cc.add(i, sizeof(uint64_t));
+		cc.add(argOffset, sizeof(uint64_t));
 	}
 
-	// get pointer to stack structure and pass it to the user callback
 	asmjit::x86::Gp argStruct = cc.newUIntPtr("argStruct");
 	cc.lea(argStruct, argsStack);
-
-	// fill reg to pass struct arg count to callback
 	asmjit::x86::Gp argCountParam = cc.newUInt8();
-	cc.mov(argCountParam, (uint8_t)sig.argCount());
+	cc.mov(argCountParam, static_cast<uint8_t>(sig.argCount()));
 
-	// create buffer for ret val
-	asmjit::x86::Mem retStack = cc.newStack(sizeof(uint64_t), 16);
+	asmjit::x86::Mem retStack = cc.newStack(sizeof(ReturnValue), 16);
 	asmjit::x86::Gp retStruct = cc.newUIntPtr("retStruct");
 	cc.lea(retStruct, retStack);
+	cc.mov(asmjit::x86::dword_ptr(retStruct, offsetof(ReturnValue, m_retVal)), 0);
+	cc.mov(asmjit::x86::dword_ptr(retStruct, offsetof(ReturnValue, m_retVal) + sizeof(uint32_t)), 0);
+	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 1);
+	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_overrideReturn)), 0);
 
-	asmjit::InvokeNode* invokeNode;
-	cc.invoke(&invokeNode,
-		(uint64_t)callback,
-		asmjit::FuncSignature::build<void, Parameters*, uint8_t, ReturnValue*>()
-	);
-
-	// call to user provided function (use ABI of host compiler)
+	asmjit::InvokeNode* invokeNode = nullptr;
+	cc.invoke(
+		&invokeNode,
+		reinterpret_cast<uint64_t>(callback),
+		asmjit::FuncSignature::build<void, Parameters*, uint8_t, ReturnValue*>());
 	invokeNode->setArg(0, argStruct);
 	invokeNode->setArg(1, argCountParam);
 	invokeNode->setArg(2, retStruct);
 
-	// mov from arguments stack structure into regs
-	cc.mov(i, 0); // reset idx
-	for (uint8_t arg_idx = 0; arg_idx < sig.argCount(); arg_idx++) {
-		const auto argType = sig.args()[arg_idx];
-
+	cc.mov(argOffset, 0);
+	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
+		const asmjit::TypeId argType = sig.args()[argIndex];
 		if (isGeneralReg(argType)) {
-			cc.mov(argRegisters.at(arg_idx).as<asmjit::x86::Gp>(), argsStackIdx);
-		}else if (isXmmReg(argType)) {
-			cc.movq(argRegisters.at(arg_idx).as<asmjit::x86::Vec>(), argsStackIdx);
-		}else {
-			Log::log("Parameters wider than 64bits not supported", ErrorLevel::SEV);
-			return 0;
-		}
-
-		// next structure slot (+= sizeof(uint64_t))
-		cc.add(i, sizeof(uint64_t));
-	}
-
-	// deref the trampoline ptr (holder must live longer, must be concrete reg since push later)
-	asmjit::x86::Gp origPtr = cc.zbx();
-	cc.mov(origPtr, (uintptr_t)getTrampolineHolder());
-	cc.mov(origPtr, asmjit::x86::ptr(origPtr));
-
-	asmjit::InvokeNode* origInvokeNode;
-	cc.invoke(&origInvokeNode, origPtr, sig);
-	for (uint8_t argIdx = 0; argIdx < sig.argCount(); argIdx++) {
-		origInvokeNode->setArg(argIdx, argRegisters.at(argIdx));
-	}
-	
-	if (sig.hasRet()) {
-		asmjit::x86::Mem retStackIdx(retStack);
-		retStackIdx.setSize(sizeof(uint64_t));
-		if (isGeneralReg(sig.ret())) {
-			asmjit::x86::Gp tmp2 = cc.newUIntPtr();
-			cc.mov(tmp2, retStackIdx);
-			cc.ret(tmp2);
+			cc.mov(argRegisters[argIndex].as<asmjit::x86::Gp>(), argsStackIndex);
 		} else {
-			asmjit::x86::Vec tmp2 = cc.newXmm();
-			cc.movq(tmp2, retStackIdx);
-			cc.ret(tmp2);
+			cc.movq(argRegisters[argIndex].as<asmjit::x86::Vec>(), argsStackIndex);
+		}
+		cc.add(argOffset, sizeof(uint64_t));
+	}
+
+	asmjit::x86::Gp originalPointer = cc.zbx();
+	cc.mov(originalPointer, reinterpret_cast<uintptr_t>(getTrampolineHolder()));
+	cc.mov(originalPointer, asmjit::x86::ptr(originalPointer));
+
+	asmjit::Label skipOriginal = cc.newLabel();
+	asmjit::Label finish = cc.newLabel();
+	cc.cmp(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 0);
+	cc.je(skipOriginal);
+
+	asmjit::InvokeNode* originalInvokeNode = nullptr;
+	cc.invoke(&originalInvokeNode, originalPointer, sig);
+	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
+		originalInvokeNode->setArg(argIndex, argRegisters[argIndex]);
+	}
+
+	if (sig.hasRet()) {
+		cc.cmp(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_overrideReturn)), 0);
+		cc.jne(finish);
+		asmjit::x86::Mem retStackIndex(retStack);
+		if (isGeneralReg(sig.ret())) {
+			retStackIndex.setSize(asmjit::TypeUtils::sizeOf(sig.ret()));
+			asmjit::x86::Gp originalResult = cc.newGp(sig.ret());
+			originalInvokeNode->setRet(0, originalResult);
+			cc.mov(retStackIndex, originalResult);
+		} else {
+			retStackIndex.setSize(sizeof(uint64_t));
+			asmjit::x86::Vec originalResult = cc.newXmm();
+			originalInvokeNode->setRet(0, originalResult);
+			cc.movq(retStackIndex, originalResult);
 		}
 	}
 
-	cc.func()->frame().addDirtyRegs(origPtr);
-	
-	cc.endFunc();
+	cc.jmp(finish);
+	cc.bind(skipOriginal);
+	cc.bind(finish);
+	if (sig.hasRet()) {
+		asmjit::x86::Mem retStackIndex(retStack);
+		if (isGeneralReg(sig.ret())) {
+			retStackIndex.setSize(asmjit::TypeUtils::sizeOf(sig.ret()));
+			asmjit::x86::Gp result = cc.newGp(sig.ret());
+			cc.mov(result, retStackIndex);
+			cc.ret(result);
+		} else {
+			retStackIndex.setSize(sizeof(uint64_t));
+			asmjit::x86::Vec result = cc.newXmm();
+			cc.movq(result, retStackIndex);
+			cc.ret(result);
+		}
+	} else {
+		cc.ret();
+	}
 
-	// write to buffer
-	cc.finalize();
-
-	// worst case, overestimates for case trampolines needed
-	code.flatten();
-	size_t size = code.codeSize();
-
-	// Allocate a virtual memory (executable).
-	m_callbackBuf = (uint64_t)new char[size];
-	if (!m_callbackBuf) {
-		PolyHook2DebugBreak();
+	cc.func()->frame().addDirtyRegs(originalPointer);
+	const asmjit::Error endFuncError = cc.endFunc();
+	if (endFuncError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback endFunc failed: ") + asmjit::DebugUtils::errorAsString(endFuncError), ErrorLevel::SEV);
+		return 0;
+	}
+	const asmjit::Error finalizeError = cc.finalize();
+	if (finalizeError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback finalize failed: ") + asmjit::DebugUtils::errorAsString(finalizeError), ErrorLevel::SEV);
+		return 0;
+	}
+	const asmjit::Error flattenError = code.flatten();
+	if (flattenError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback flatten failed: ") + asmjit::DebugUtils::errorAsString(flattenError), ErrorLevel::SEV);
 		return 0;
 	}
 
-	MemoryProtector protector(m_callbackBuf, size, ProtFlag::R | ProtFlag::W | ProtFlag::X, *this, false);
+	const size_t size = code.codeSize();
+	m_callbackBuf = reinterpret_cast<uint64_t>(
+		operator new(size, std::align_val_t{16}, std::nothrow));
+	if (m_callbackBuf == 0) {
+		Log::log("Failed to allocate ILCallback JIT memory", ErrorLevel::SEV);
+		return 0;
+	}
+	MemoryProtector writer(m_callbackBuf, size, ProtFlag::R | ProtFlag::W | ProtFlag::X, *this, false);
+	const asmjit::Error resolveError = code.resolveCrossSectionFixups();
+	if (resolveError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback fixup resolution failed: ") + asmjit::DebugUtils::errorAsString(resolveError), ErrorLevel::SEV);
+		operator delete(reinterpret_cast<void*>(m_callbackBuf), std::align_val_t{16});
+		m_callbackBuf = 0;
+		return 0;
+	}
 
-	code.resolveCrossSectionFixups();
-
-	 // Relocate to the base-address of the allocated memory.
-	code.relocateToBase(m_callbackBuf);
-	code.copyFlattenedData((unsigned char*)m_callbackBuf, size);
+	const asmjit::Error relocateError = code.relocateToBase(m_callbackBuf);
+	if (relocateError != asmjit::kErrorOk) {
+		Log::log(std::string("ILCallback relocation failed: ") + asmjit::DebugUtils::errorAsString(relocateError), ErrorLevel::SEV);
+		operator delete(reinterpret_cast<void*>(m_callbackBuf), std::align_val_t{16});
+		m_callbackBuf = 0;
+		return 0;
+	}
+	code.copyFlattenedData(reinterpret_cast<unsigned char*>(m_callbackBuf), size);
+	MemoryProtector executable(m_callbackBuf, size, ProtFlag::R | ProtFlag::W | ProtFlag::X, *this, false);
+	if (!executable.isGood()) {
+		Log::log("ILCallback failed to make JIT memory executable", ErrorLevel::SEV);
+		operator delete(reinterpret_cast<void*>(m_callbackBuf), std::align_val_t{16});
+		m_callbackBuf = 0;
+		return 0;
+	}
 
 	Log::log("JIT Stub:\n" + std::string(log.data()), ErrorLevel::INFO);
 	return m_callbackBuf;
 }
 
-uint64_t PLH::ILCallback::getJitFunc(const std::string& retType, const std::vector<std::string>& paramTypes, const asmjit::Arch arch, const tUserCallback callback, std::string callConv/* = ""*/) {
-	asmjit::FuncSignature sig(getCallConv(callConv), asmjit::FuncSignature::kNoVarArgs, getTypeId(retType));
-	for (const std::string& s : paramTypes) {
-		sig.addArg(getTypeId(s));
+uint64_t SIGILHOOK::ILCallback::getJitFunc(
+	const std::string& retType,
+	const std::vector<std::string>& paramTypes,
+	const asmjit::Arch arch,
+	const tUserCallback callback,
+	std::string callConv) {
+	const asmjit::TypeId returnTypeId = getTypeId(retType);
+	if (retType != "void" && returnTypeId == asmjit::TypeId::kVoid) {
+		Log::log("Unsupported ILCallback return type: " + retType, ErrorLevel::SEV);
+		return 0;
 	}
-	
+
+	asmjit::FuncSignature sig(getCallConv(callConv), asmjit::FuncSignature::kNoVarArgs, returnTypeId);
+	for (const std::string& paramType : paramTypes) {
+		const asmjit::TypeId typeId = getTypeId(paramType);
+		if (typeId == asmjit::TypeId::kVoid) {
+			Log::log("Unsupported ILCallback parameter type: " + paramType, ErrorLevel::SEV);
+			return 0;
+		}
+		sig.addArg(typeId);
+	}
+
 	return getJitFunc(sig, arch, callback);
 }
 
-uint64_t* PLH::ILCallback::getTrampolineHolder() {
+uint64_t* SIGILHOOK::ILCallback::getTrampolineHolder() {
 	return &m_trampolinePtr;
 }
 
-bool PLH::ILCallback::isGeneralReg(const asmjit::TypeId typeId) const {
+bool SIGILHOOK::ILCallback::isGeneralReg(const asmjit::TypeId typeId) const {
 	switch (typeId) {
 	case asmjit::TypeId::kInt8:
 	case asmjit::TypeId::kUInt8:
@@ -277,9 +326,9 @@ bool PLH::ILCallback::isGeneralReg(const asmjit::TypeId typeId) const {
 	}
 }
 
-bool PLH::ILCallback::isXmmReg(const asmjit::TypeId typeId) const {
+bool SIGILHOOK::ILCallback::isXmmReg(const asmjit::TypeId typeId) const {
 	switch (typeId) {
-	case  asmjit::TypeId::kFloat32:
+	case asmjit::TypeId::kFloat32:
 	case asmjit::TypeId::kFloat64:
 		return true;
 	default:
@@ -287,11 +336,13 @@ bool PLH::ILCallback::isXmmReg(const asmjit::TypeId typeId) const {
 	}
 }
 
-PLH::ILCallback::ILCallback() {
+SIGILHOOK::ILCallback::ILCallback() {
 	m_callbackBuf = 0;
 	m_trampolinePtr = 0;
 }
 
-PLH::ILCallback::~ILCallback() {
-	delete[] reinterpret_cast<char*>(m_callbackBuf);
+SIGILHOOK::ILCallback::~ILCallback() {
+	if (m_callbackBuf != 0) {
+		operator delete(reinterpret_cast<void*>(m_callbackBuf), std::align_val_t{16});
+	}
 }

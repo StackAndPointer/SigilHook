@@ -1,7 +1,7 @@
 {
-  "name": "testpolyhook2",
+  "name": "testsigilhook",
   "version-string": "1.0.0.1",
   "dependencies": [
-    "polyhook2"
+    "sigilhook"
   ]
 }

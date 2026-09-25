@@ -5,8 +5,8 @@
 //
 //#include <Catch.hpp>
 //
-//#include "polyhook2/Exceptions/HWBreakPointHook.hpp"
-//#include "polyhook2/tests/TestEffectTracker.hpp"
+//#include "sigilhook/Exceptions/HWBreakPointHook.hpp"
+//#include "sigilhook/tests/TestEffectTracker.hpp"
 //
 //EffectTracker effects3;
 //
@@ -17,7 +17,7 @@
 //	return i;
 //}
 //
-//std::shared_ptr<PLH::HWBreakPointHook> hwBpHook; // must be ptr because we need to call getProtectionObject
+//std::shared_ptr<SIGILHOOK::HWBreakPointHook> hwBpHook; // must be ptr because we need to call getProtectionObject
 //NOINLINE int hookMeCallbackHWBP() {
 //	auto protObj = hwBpHook->getProtectionObject();
 //	volatile int i = 0;
@@ -29,7 +29,7 @@
 //
 //TEST_CASE("Testing Hardware Breakpoints", "[AVehHook],[HWBreakPointHook]") {
 //	SECTION("Verify callback is executed") {
-//		hwBpHook = std::make_shared<PLH::HWBreakPointHook>((char*)&hookMeHWBP, (char*)&hookMeCallbackHWBP);
+//		hwBpHook = std::make_shared<SIGILHOOK::HWBreakPointHook>((char*)&hookMeHWBP, (char*)&hookMeCallbackHWBP);
 //		REQUIRE(hwBpHook->hook() == true);
 //
 //		effects3.PushEffect();
@@ -40,7 +40,7 @@
 //	}
 //
 //	SECTION("Verify multiple calls in a row reprotect") {
-//		hwBpHook = std::make_shared<PLH::HWBreakPointHook>((char*)&hookMeHWBP, (char*)&hookMeCallbackHWBP);
+//		hwBpHook = std::make_shared<SIGILHOOK::HWBreakPointHook>((char*)&hookMeHWBP, (char*)&hookMeCallbackHWBP);
 //		REQUIRE(hwBpHook->hook() == true);
 //
 //		effects3.PushEffect();

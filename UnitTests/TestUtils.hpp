@@ -19,15 +19,15 @@
  * Clang allows generic lambdas to decay to function pointers if the instantiated signature matches.
  * This is a known divergence from the C++ standard.
  */
-#define PLH_TEST_CALLBACK(FUNC, HOOK, TRMP, ...) \
+#define SIGILHOOK_TEST_CALLBACK(FUNC, HOOK, TRMP, ...) \
     uint64_t TRMP = 0; \
     decltype(&FUNC) HOOK = []<typename... Args>(Args... $args) \
         noexcept(noexcept(std::declval<decltype(&FUNC)>()(std::declval<Args>()...))) -> auto { \
-        PLH::StackCanary canary; \
-        PLH_STOP_OPTIMIZATIONS(); \
+        SIGILHOOK::StackCanary canary; \
+        SIGILHOOK_STOP_OPTIMIZATIONS(); \
         effects.PeakEffect().trigger(); \
         __VA_ARGS__ \
-        return PLH::FnCast(TRMP, &FUNC)($args...); \
+        return SIGILHOOK::FnCast(TRMP, &FUNC)($args...); \
     }
 // clang-format on
 
@@ -36,21 +36,21 @@
  * where hooked functions and trampoline variables derive their name from the original function.
  * Hence, it makes sense to create a corresponding macro utility
  */
-#define PLH_TEST_DETOUR_CALLBACK(FUNC, ...) PLH_TEST_CALLBACK(FUNC, FUNC##_hooked, FUNC##_trmp, __VA_ARGS__)
-#define PLH_TEST_DETOUR(FUNC) detour((uint64_t)&FUNC, (uint64_t)FUNC##_hooked, &FUNC##_trmp);
+#define SIGILHOOK_TEST_DETOUR_CALLBACK(FUNC, ...) SIGILHOOK_TEST_CALLBACK(FUNC, FUNC##_hooked, FUNC##_trmp, __VA_ARGS__)
+#define SIGILHOOK_TEST_DETOUR(FUNC) detour((uint64_t)&FUNC, (uint64_t)FUNC##_hooked, &FUNC##_trmp);
 
 /**
  * These tests can spontaneously fail if the compiler decides to optimize away
- * the handler or inline the function. PLH_NOINLINE attempts to fix the latter, the former
+ * the handler or inline the function. SIGILHOOK_NOINLINE attempts to fix the latter, the former
  * is out of our control but typically returning volatile things, volatile locals, and a
  * printf inside the body can mitigate this significantly. Do serious checking in Debug
  * or ReleaseWithDebInfo mode (ReleaseWithDebInfo optimizes _slightly_ less).
  */
-#define PLH_STOP_OPTIMIZATIONS()                                                                                       \
+#define SIGILHOOK_STOP_OPTIMIZATIONS()                                                                                       \
     volatile int i = 0;                                                                                                \
-    PH_UNUSED(i)
+    SIGILHOOK_UNUSED(i)
 
-namespace PLH::test {
+namespace SIGILHOOK::test {
 
 void registerTestLogger();
 

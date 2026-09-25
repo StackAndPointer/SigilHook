@@ -337,3 +337,4 @@ _install/
 out/
 _build-*/
 _install-*/
+_diag-*/

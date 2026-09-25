@@ -1,6 +1,6 @@
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
-Effect::Effect() : m_uid(PLH::UID::singleton()) {
+Effect::Effect() : m_uid(SIGILHOOK::UID::singleton()) {
 	m_executed = false;
 }
 
@@ -30,7 +30,7 @@ Effect EffectTracker::PopEffect() {
 
 Effect& EffectTracker::PeakEffect() {
 	if (m_effectQ.size() <= 0) {
-		PolyHook2DebugBreak();
+		SigilHookDebugBreak();
 		PushEffect();
 	}
 		

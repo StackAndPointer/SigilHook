@@ -1,22 +1,22 @@
-#include "polyhook2/PE/EatHook.hpp"
+#include "sigilhook/PE/EatHook.hpp"
 
-PLH::EatHook::EatHook(const std::string& apiName, const std::wstring& moduleName, const char* fnCallback, uint64_t* userOrigVar)
+SIGILHOOK::EatHook::EatHook(const std::string& apiName, const std::wstring& moduleName, const char* fnCallback, uint64_t* userOrigVar)
 	: EatHook(apiName, moduleName, (uint64_t)fnCallback, userOrigVar)
 {}
 
-PLH::EatHook::EatHook(const std::string& apiName, const std::wstring& moduleName, const uint64_t fnCallback, uint64_t* userOrigVar)
+SIGILHOOK::EatHook::EatHook(const std::string& apiName, const std::wstring& moduleName, const uint64_t fnCallback, uint64_t* userOrigVar)
     : EatHook(apiName, moduleName, nullptr, fnCallback, userOrigVar)
 {}
 
-PLH::EatHook::EatHook(const std::string& apiName, const HMODULE moduleHandle, const char* fnCallback, uint64_t* userOrigVar)
+SIGILHOOK::EatHook::EatHook(const std::string& apiName, const HMODULE moduleHandle, const char* fnCallback, uint64_t* userOrigVar)
     : EatHook(apiName, moduleHandle, (uint64_t)fnCallback, userOrigVar)
 {}
 
-PLH::EatHook::EatHook(const std::string& apiName, const HMODULE moduleHandle, const uint64_t fnCallback, uint64_t* userOrigVar)
+SIGILHOOK::EatHook::EatHook(const std::string& apiName, const HMODULE moduleHandle, const uint64_t fnCallback, uint64_t* userOrigVar)
     : EatHook(apiName, L"", moduleHandle, fnCallback, userOrigVar)
 {}
 
-PLH::EatHook::EatHook(std::string apiName, std::wstring moduleName, const  HMODULE moduleHandle, const uint64_t fnCallback, uint64_t* userOrigVar)
+SIGILHOOK::EatHook::EatHook(std::string apiName, std::wstring moduleName, const  HMODULE moduleHandle, const uint64_t fnCallback, uint64_t* userOrigVar)
 	: m_moduleName(std::move(moduleName))
 	, m_apiName(std::move(apiName))
 	, m_fnCallback(fnCallback)
@@ -27,7 +27,7 @@ PLH::EatHook::EatHook(std::string apiName, std::wstring moduleName, const  HMODU
 	, m_origFunc(0)
 {}
 
-bool PLH::EatHook::hook() {
+bool SIGILHOOK::EatHook::hook() {
 	assert(m_userOrigVar != nullptr);
 	uint32_t* pExport = FindEatFunction();
 	if (pExport == nullptr)
@@ -39,7 +39,7 @@ bool PLH::EatHook::hook() {
 	instead allocate a small trampoline within +- 2GB which will do the full
 	width jump to the final destination, and point the EAT to the stub.*/
 	if (offset > std::numeric_limits<uint32_t>::max()) {
-		m_trampoline = (uint64_t)m_allocator.allocate(m_moduleBase, PLH::calc_2gb_above(m_moduleBase));
+		m_trampoline = (uint64_t)m_allocator.allocate(m_moduleBase, SIGILHOOK::calc_2gb_above(m_moduleBase));
 		if (m_trampoline == 0) {
 			Log::log("EAT hook offset is > 32bit's. Allocation of trampoline necessary and failed to find free page within range", ErrorLevel::INFO);
 			return false;
@@ -47,7 +47,7 @@ bool PLH::EatHook::hook() {
 
 		MemoryProtector protector(m_trampoline, 64, ProtFlag::R | ProtFlag::W | ProtFlag::X, *this, false);
 
-		PLH::ZydisDisassembler::writeEncoding(makeAgnosticJmp(m_trampoline, m_fnCallback), *this);
+		SIGILHOOK::ZydisDisassembler::writeEncoding(makeAgnosticJmp(m_trampoline, m_fnCallback), *this);
 		offset = (size_t)(m_trampoline - m_moduleBase);
 
 		Log::log("EAT hook offset is > 32bit's. Allocation of trampoline necessary", ErrorLevel::INFO);
@@ -63,7 +63,7 @@ bool PLH::EatHook::hook() {
 	return true;
 }
 
-bool PLH::EatHook::unHook() {
+bool SIGILHOOK::EatHook::unHook() {
 	assert(m_userOrigVar != nullptr);
 	assert(m_hooked);
 	if (!m_hooked) {
@@ -88,7 +88,7 @@ bool PLH::EatHook::unHook() {
 	return true;
 }
 
-uint32_t* PLH::EatHook::FindEatFunction() {
+uint32_t* SIGILHOOK::EatHook::FindEatFunction() {
 	if(!m_moduleBase){
 		m_moduleBase = FindModule();
 	}
@@ -101,7 +101,7 @@ uint32_t* PLH::EatHook::FindEatFunction() {
 	return FindEatFunctionInModule();
 }
 
-uint64_t PLH::EatHook::FindModule() {
+uint64_t SIGILHOOK::EatHook::FindModule() {
 #if defined(_WIN64)
 	PEB* peb = (PPEB)__readgsqword(0x60);
 #else
@@ -139,7 +139,7 @@ uint64_t PLH::EatHook::FindModule() {
 	return 0;
 }
 
-uint32_t* PLH::EatHook::FindEatFunctionInModule() const {
+uint32_t* SIGILHOOK::EatHook::FindEatFunctionInModule() const {
     if (m_moduleBase == NULL) {
         return nullptr;
     }

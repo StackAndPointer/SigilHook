@@ -1,11 +1,11 @@
-#include "polyhook2/Virtuals/VFuncSwapHook.hpp"
-#include "polyhook2/ErrorLog.hpp"
+#include "sigilhook/Virtuals/VFuncSwapHook.hpp"
+#include "sigilhook/ErrorLog.hpp"
 
-PLH::VFuncSwapHook::VFuncSwapHook(const char* Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap)
+SIGILHOOK::VFuncSwapHook::VFuncSwapHook(const char* Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap)
     : VFuncSwapHook((uint64_t)Class, redirectMap, userOrigMap)
 {}
 
-PLH::VFuncSwapHook::VFuncSwapHook(const uint64_t Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap) 
+SIGILHOOK::VFuncSwapHook::VFuncSwapHook(const uint64_t Class, const VFuncMap& redirectMap, VFuncMap* userOrigMap)
 	: m_class(Class)
 	, m_vtable(nullptr)
 	, m_vFuncCount(0)
@@ -13,7 +13,7 @@ PLH::VFuncSwapHook::VFuncSwapHook(const uint64_t Class, const VFuncMap& redirect
 	, m_userOrigMap(userOrigMap)
 {}
 
-bool PLH::VFuncSwapHook::hook() {
+bool SIGILHOOK::VFuncSwapHook::hook() {
 	assert(m_userOrigMap != nullptr);
 	MemoryProtector prot(m_class, sizeof(void*), ProtFlag::R | ProtFlag::W, *this);
 	m_vtable = *(uintptr_t**)m_class;
@@ -36,7 +36,7 @@ bool PLH::VFuncSwapHook::hook() {
 	return true;
 }
 
-bool PLH::VFuncSwapHook::unHook() {
+bool SIGILHOOK::VFuncSwapHook::unHook() {
 	assert(m_userOrigMap != nullptr);
 	assert(m_hooked);
 	if (!m_hooked) {
@@ -59,7 +59,7 @@ bool PLH::VFuncSwapHook::unHook() {
 	return true;
 }
 
-uint16_t PLH::VFuncSwapHook::countVFuncs() {
+uint16_t SIGILHOOK::VFuncSwapHook::countVFuncs() {
 	uint16_t count = 0;
 	for (;; count++) {
 		// if you have more than 500 vfuncs you have a problem and i don't support you :)

@@ -2,9 +2,9 @@
 // Created by steve on 7/4/17.
 //
 #include <Catch.hpp>
-#include "polyhook2/Detour/x86Detour.hpp"
+#include "sigilhook/Detour/x86Detour.hpp"
 
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
@@ -34,7 +34,7 @@ HOOK_CALLBACK(&hookMe1, h_hookMe1, { // NOLINT(cert-err58-cpp)
     std::cout << "Hook 1 Called!" << std::endl;
 
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookMe1Tramp, &hookMe1)();
+    return SIGILHOOK::FnCast(hookMe1Tramp, &hookMe1)();
 });
 
 typedef void(*PKNORMAL_ROUTINE)(void* NormalContext, void* SystemArgument1,void* SystemArgument2);
@@ -45,7 +45,7 @@ tNtQueueApcThread pNtQueueApcthread = (tNtQueueApcThread)GetProcAddress(GetModul
 HOOK_CALLBACK(pNtQueueApcthread, h_NtQueueapcThread, { // NOLINT(cert-err58-cpp)
     std::cout << "hkNtQueueApcThread!" << std::endl;
 
-    return PLH::FnCast(hkNtQueueapcThread, pNtQueueApcthread)(_args...);
+    return SIGILHOOK::FnCast(hkNtQueueapcThread, pNtQueueApcthread)(_args...);
 });
 
 /*  55                      push   ebp
@@ -66,7 +66,7 @@ uint64_t nullTramp = NULL;
 
 NOINLINE void __cdecl h_nullstub() {
     volatile int i = 0;
-    PH_UNUSED(i);
+    SIGILHOOK_UNUSED(i);
 }
 
 /*
@@ -99,7 +99,7 @@ unsigned char hookMe5[] =
     0xc2, 0x14, 0x00 // retn 0x14
 };
 
-NOINLINE void PH_ATTR_NAKED hookMeLoop() {
+NOINLINE void SIGILHOOK_ATTR_NAKED hookMeLoop() {
 #ifdef _MSC_VER
     __asm {
         xor eax, eax
@@ -127,7 +127,7 @@ HOOK_CALLBACK(&hookMeLoop, h_hookMeLoop, { // NOLINT(cert-err58-cpp)
     std::cout << "Hook loop Called!" << std::endl;
 
     effects.PeakEffect().trigger();
-    PLH::FnCast(hookMeLoopTramp, &hookMeLoop)();
+    SIGILHOOK::FnCast(hookMeLoopTramp, &hookMeLoop)();
 });
 
 #include <cstdarg>
@@ -142,7 +142,7 @@ NOINLINE int __cdecl h_hookPrintf(const char* format, ...) {
         va_end(args);
 
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookPrintfTramp, &printf)("INTERCEPTED YO:%s", buffer);
+    return SIGILHOOK::FnCast(hookPrintfTramp, &printf)("INTERCEPTED YO:%s", buffer);
 }
 
 //#include <cmath>
@@ -153,7 +153,7 @@ double (* pFnPowDouble)(double, double) = &std::pow;
 uint64_t hookPowTramp = NULL;
 HOOK_CALLBACK(pFnPowDouble, h_hookPow, { // NOLINT(cert-err58-cpp)
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookPowTramp, pFnPowDouble)(_args...);
+    return SIGILHOOK::FnCast(hookPowTramp, pFnPowDouble)(_args...);
 });
 
 #include <cstdlib>
@@ -161,7 +161,7 @@ HOOK_CALLBACK(pFnPowDouble, h_hookPow, { // NOLINT(cert-err58-cpp)
 uint64_t hookMallocTramp = NULL;
 HOOK_CALLBACK(&malloc, h_hookMalloc, { // NOLINT(cert-err58-cpp)
     effects.PeakEffect().trigger();
-    return PLH::FnCast(hookMallocTramp, &malloc)(_args...);
+    return SIGILHOOK::FnCast(hookMallocTramp, &malloc)(_args...);
 });
 
 #include <WinSock2.h>
@@ -170,60 +170,60 @@ HOOK_CALLBACK(&malloc, h_hookMalloc, { // NOLINT(cert-err58-cpp)
 
 uint64_t hookRecvTramp = NULL;
 HOOK_CALLBACK(&recv, h_hookRecv, { // NOLINT(cert-err58-cpp)
-    return PLH::FnCast(hookRecvTramp, &recv)(_args...);
+    return SIGILHOOK::FnCast(hookRecvTramp, &recv)(_args...);
 });
 
 TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
     SECTION("Normal function") {
-        PLH::x86Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
         volatile auto result = hookMe1();
-        PH_UNUSED(result);
+        SIGILHOOK_UNUSED(result);
         REQUIRE(effects.PopEffect().didExecute());
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Normal function rehook") {
-        PLH::x86Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMe1, (uint64_t) h_hookMe1, &hookMe1Tramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
         REQUIRE(detour.reHook() == true); // can only really test this doesn't cause memory corruption easily
         volatile auto result = hookMe1();
-        PH_UNUSED(result);
+        SIGILHOOK_UNUSED(result);
         REQUIRE(effects.PopEffect().didExecute());
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Jmp into prologue w/ src in range") {
-        PLH::x86Detour detour((uint64_t) &hookMe2, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMe2, (uint64_t) &h_nullstub, &nullTramp);
 
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Jmp into prologue w/ src out of range") {
-        PLH::x86Detour detour((uint64_t) &hookMe3, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMe3, (uint64_t) &h_nullstub, &nullTramp);
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
     
     SECTION("Test instruction in prologue") {
-        PLH::x86Detour detour((uint64_t) &hookMe4, (uint64_t) &h_nullstub, &nullTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMe4, (uint64_t) &h_nullstub, &nullTramp);
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Call with fs base") {
-        PLH::x86Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
+        SIGILHOOK::x86Detour detour((uint64_t)&hookMe5, (uint64_t)&h_nullstub, &nullTramp);
         REQUIRE(detour.hook() == true);
         REQUIRE(detour.unHook() == true);
     }
 
     SECTION("Loop") {
-        PLH::x86Detour detour((uint64_t) &hookMeLoop, (uint64_t) h_hookMeLoop, &hookMeLoopTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeLoop, (uint64_t) h_hookMeLoop, &hookMeLoopTramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
@@ -233,7 +233,7 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
     }
 
     SECTION("hook printf") {
-        PLH::x86Detour detour((uint64_t) &printf, (uint64_t) h_hookPrintf, &hookPrintfTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &printf, (uint64_t) h_hookPrintf, &hookPrintfTramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
@@ -244,18 +244,18 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
 
         // it's a pun...
     SECTION("hook pow") {
-        PLH::x86Detour detour((uint64_t) pFnPowDouble, (uint64_t) h_hookPow, &hookPowTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) pFnPowDouble, (uint64_t) h_hookPow, &hookPowTramp);
         REQUIRE(detour.hook() == true);
 
         effects.PushEffect();
         volatile double result = pFnPowDouble(2, 2);
-        PH_UNUSED(result);
+        SIGILHOOK_UNUSED(result);
         detour.unHook();
         REQUIRE(effects.PopEffect().didExecute());
     }
 
     SECTION("hook malloc") {
-        PLH::x86Detour detour((uint64_t) &malloc, (uint64_t) h_hookMalloc, &hookMallocTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &malloc, (uint64_t) h_hookMalloc, &hookMallocTramp);
         effects.PushEffect(); // catch does some allocations, push effect first so peak works
         REQUIRE(detour.hook() == true);
 
@@ -266,12 +266,12 @@ TEST_CASE("Testing x86 detours", "[x86Detour][ADetour]") {
     }
 
     SECTION("hook recv") {
-        PLH::x86Detour detour((uint64_t) &recv, (uint64_t)h_hookRecv, &hookRecvTramp);
+        SIGILHOOK::x86Detour detour((uint64_t) &recv, (uint64_t)h_hookRecv, &hookRecvTramp);
         REQUIRE(detour.hook() == true);
     }
 
     SECTION("queue apc thread") {
-        PLH::x86Detour detour((uint64_t)pNtQueueApcthread, (uint64_t)h_NtQueueapcThread, &hkNtQueueapcThread);
+        SIGILHOOK::x86Detour detour((uint64_t)pNtQueueApcthread, (uint64_t)h_NtQueueapcThread, &hkNtQueueapcThread);
         effects.PushEffect(); // catch does some allocations, push effect first so peak works
         REQUIRE(detour.hook() == true);
     }

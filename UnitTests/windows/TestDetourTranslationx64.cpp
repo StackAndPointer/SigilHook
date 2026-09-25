@@ -1,10 +1,10 @@
 #include <Catch.hpp>
-#include "polyhook2/Detour/x64Detour.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
 
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
 #include <memoryapi.h>
 
@@ -69,41 +69,41 @@ unsigned char cmpR15bByte[] = {
 uint64_t oCmpQwordImm = NULL;
 
 uint64_t hookCmpQwordImm() {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     ripEffects.PeakEffect().trigger();
 
     printf("Hooked %s\n", __func__);
 
-    return PLH::FnCast(oCmpQwordImm, &hookCmpQwordImm)();
+    return SIGILHOOK::FnCast(oCmpQwordImm, &hookCmpQwordImm)();
 }
 
 uint64_t oCmpQwordReg = NULL;
 
 uint64_t hookCmpQwordReg() {
-    PLH::StackCanary canary;
+    SIGILHOOK::StackCanary canary;
     ripEffects.PeakEffect().trigger();
 
     printf("Hooked %s\n", __func__);
 
-    return PLH::FnCast(oCmpQwordReg, &hookCmpQwordReg)();
+    return SIGILHOOK::FnCast(oCmpQwordReg, &hookCmpQwordReg)();
 }
 
 TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
     // Immediate
 
     SECTION("cmp qword & imm") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
 
         DWORD flOldProtect;
         VirtualProtect((void*) cmpQwordImm, (SIZE_T) sizeof(cmpQwordImm), PAGE_EXECUTE_READWRITE, &flOldProtect);
 
-        PLH::x64Detour detour((uint64_t) cmpQwordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
+        SIGILHOOK::x64Detour detour((uint64_t) cmpQwordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
 
         REQUIRE(detour.hook());
 
         ripEffects.PushEffect();
 
-        const auto result = PLH::FnCast(cmpQwordImm, hookCmpQwordImm)();
+        const auto result = SIGILHOOK::FnCast(cmpQwordImm, hookCmpQwordImm)();
 
         REQUIRE(ripEffects.PopEffect().didExecute());
         REQUIRE(result == 0x1337);
@@ -112,8 +112,8 @@ TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
     }
 
     SECTION("cmp dword & imm") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpDwordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpDwordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());
@@ -121,16 +121,16 @@ TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
 
 
     SECTION("cmp word & imm") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpWordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpWordImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());
     }
 
     SECTION("cmp byte & imm") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpByteImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpByteImm, (uint64_t) hookCmpQwordImm, &oCmpQwordImm);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());
@@ -139,18 +139,18 @@ TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
         // Registers
 
     SECTION("cmp qword & reg") {
-        PLH::StackCanary canary;
+        SIGILHOOK::StackCanary canary;
 
         DWORD flOldProtect;
         VirtualProtect((void*) cmpQwordRegR10, (SIZE_T) sizeof(cmpQwordRegR10), PAGE_EXECUTE_READWRITE, &flOldProtect);
 
-        PLH::x64Detour detour((uint64_t) cmpQwordRegR10, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
+        SIGILHOOK::x64Detour detour((uint64_t) cmpQwordRegR10, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
 
         REQUIRE(detour.hook());
 
         ripEffects.PushEffect();
 
-        const auto result = PLH::FnCast(cmpQwordRegR10, hookCmpQwordReg)();
+        const auto result = SIGILHOOK::FnCast(cmpQwordRegR10, hookCmpQwordReg)();
 
         REQUIRE(ripEffects.PopEffect().didExecute());
         REQUIRE(result == 0x1337);
@@ -161,24 +161,24 @@ TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
         // Subsequent hooks don't test trampoline calls
 
     SECTION("cmp dword & reg") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpRegADword, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpRegADword, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());
     }
 
     SECTION("cmp word & reg") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpWordRegB, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpWordRegB, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());
     }
 
     SECTION("cmp byte & reg") {
-        PLH::StackCanary canary;
-        PLH::x64Detour detour((uint64_t) cmpR15bByte, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
+        SIGILHOOK::StackCanary canary;
+        SIGILHOOK::x64Detour detour((uint64_t) cmpR15bByte, (uint64_t) hookCmpQwordReg, &oCmpQwordReg);
 
         REQUIRE(detour.hook());
         REQUIRE(detour.unHook());

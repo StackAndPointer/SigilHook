@@ -1,15 +1,15 @@
-#include "polyhook2/UID.hpp"
+#include "sigilhook/UID.hpp"
 
-PLH::UID::UID(long val) {
+SIGILHOOK::UID::UID(long val) {
 	this->val = val;
 }
 
-std::atomic_long& PLH::UID::singleton() {
+std::atomic_long& SIGILHOOK::UID::singleton() {
 	static std::atomic_long base = { -1 };
 	base++;
 	return base;
 }
 
-PLH::UID::UID() {
+SIGILHOOK::UID::UID() {
 	this->val = -1;
 }

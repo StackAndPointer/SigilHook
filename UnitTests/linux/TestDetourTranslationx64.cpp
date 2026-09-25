@@ -3,10 +3,10 @@
 
 #include <Catch.hpp>
 
-#include "polyhook2/Detour/x64Detour.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Detour/x64Detour.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 #include "../TestUtils.hpp"
 
@@ -16,32 +16,32 @@ namespace {
 
 // TODO: Translation + INPLACE scheme
 
-PLH_TEST_DETOUR_CALLBACK(dlmopen, {
+SIGILHOOK_TEST_DETOUR_CALLBACK(dlmopen, {
 	printf("Hooked dlmopen\n");
 });
 
 TEST_CASE("Testing Detours with Translations", "[Translation][ADetour]") {
-	PLH::test::registerTestLogger();
+	SIGILHOOK::test::registerTestLogger();
 
 // dlmopen may or may not have instructions requiring translations.
 // Hence, this test was disabled. We need to construct reliable synthetic tests instead.
 #if 0
 	SECTION("dlmopen (INPLACE)") {
-		PLH::StackCanary canary;
+		SIGILHOOK::StackCanary canary;
 
 		const auto* handleBefore = dlmopen(LM_ID_BASE, LIBM_SO, RTLD_NOW);
 
-		PLH::x64Detour detour((uint64_t)dlmopen, (uint64_t)dlmopen_hooked, &dlmopen_trmp);
+		SIGILHOOK::x64Detour detour((uint64_t)dlmopen, (uint64_t)dlmopen_hooked, &dlmopen_trmp);
 		// Only INPLACE creates conditions for translation, since
 		// trampoline will be close to 0x0, where as
 		// dlmopen    will be close to 0x00007F__________
-		detour.setDetourScheme(PLH::x64Detour::detour_scheme_t::INPLACE);
+		detour.setDetourScheme(SIGILHOOK::x64Detour::detour_scheme_t::INPLACE);
 		REQUIRE(detour.hook());
 
 		effects.PushEffect();
 		const auto* handleAfter = dlmopen(LM_ID_BASE, LIBM_SO, RTLD_NOW);
 
-		REQUIRE(detour.hasDiagnostic(PLH::Diagnostic::TranslatedInstructions));
+		REQUIRE(detour.hasDiagnostic(SIGILHOOK::Diagnostic::TranslatedInstructions));
 		REQUIRE(effects.PopEffect().didExecute());
 		REQUIRE(handleAfter == handleBefore);
 

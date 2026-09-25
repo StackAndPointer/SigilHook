@@ -2,9 +2,9 @@
 
 #include <Catch.hpp>
 
-#include "polyhook2/Virtuals/VTableSwapHook.hpp"
-#include "polyhook2/Tests/StackCanary.hpp"
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Virtuals/VTableSwapHook.hpp"
+#include "sigilhook/Tests/StackCanary.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 EffectTracker vTblSwapEffects;
 
@@ -22,7 +22,7 @@ public:
 };
 
 #pragma warning(disable: 4100)
-PLH::VFuncMap origVFuncs;
+SIGILHOOK::VFuncMap origVFuncs;
 HOOK_CALLBACK(&VirtualTest::NoParamVirt, hkVirtNoParams, {
 	vTblSwapEffects.PeakEffect().trigger();
 	return ((hkVirtNoParams_t)origVFuncs.at(1))(_args...);
@@ -37,9 +37,9 @@ TEST_CASE("VTableSwap tests", "[VTableSwap]") {
 	std::shared_ptr<VirtualTest> ClassToHook(new VirtualTest);
 
 	SECTION("Verify vtable redirected") {
-		PLH::StackCanary canary;
-		PLH::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams}};
-		PLH::VTableSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams}};
+		SIGILHOOK::VTableSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs);
 		REQUIRE(hook.hook());
 		REQUIRE(origVFuncs.size() == 1);
 
@@ -50,9 +50,9 @@ TEST_CASE("VTableSwap tests", "[VTableSwap]") {
 	}
 
 	SECTION("Verify multiple vtable redirected") {
-		PLH::StackCanary canary;
-		PLH::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams},{(uint16_t)2, (uint64_t)hkVirtNoParams}};
-		PLH::VTableSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs);
+		SIGILHOOK::StackCanary canary;
+		SIGILHOOK::VFuncMap redirect = {{(uint16_t)1, (uint64_t)hkVirtNoParams},{(uint16_t)2, (uint64_t)hkVirtNoParams}};
+		SIGILHOOK::VTableSwapHook hook((char*)ClassToHook.get(), redirect, &origVFuncs);
 		REQUIRE(hook.hook());
 		REQUIRE(origVFuncs.size() == 2);
 

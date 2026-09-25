@@ -1,7 +1,7 @@
-#include "polyhook2/RangeAllocator.hpp"
-#include "polyhook2/PolyHookOsIncludes.hpp"
+#include "sigilhook/RangeAllocator.hpp"
+#include "sigilhook/SigilHookOsIncludes.hpp"
 
-PLH::FBAllocator::FBAllocator(uint64_t min, uint64_t max, uint8_t blockSize, uint8_t blockCount) : m_allocator(nullptr), m_hAllocator(0) {
+SIGILHOOK::FBAllocator::FBAllocator(uint64_t min, uint64_t max, uint8_t blockSize, uint8_t blockCount) : m_allocator(nullptr), m_hAllocator(0) {
 	m_min = min;
 	m_max = max;
 	m_dataPool = 0;
@@ -11,7 +11,7 @@ PLH::FBAllocator::FBAllocator(uint64_t min, uint64_t max, uint8_t blockSize, uin
 	m_alloc2Supported = boundedAllocSupported();
 }
 
-PLH::FBAllocator::~FBAllocator()
+SIGILHOOK::FBAllocator::~FBAllocator()
 {
 	uint64_t freeSize = 0;
 
@@ -22,18 +22,18 @@ PLH::FBAllocator::~FBAllocator()
 		m_hAllocator = 0;
 	}
 
-	if(m_dataPool) { 
+	if(m_dataPool) {
 		boundAllocFree(m_dataPool, freeSize);
 		m_dataPool = 0;
 	}
 }
 
-bool PLH::FBAllocator::initialize()
+bool SIGILHOOK::FBAllocator::initialize()
 {
 	uint64_t alignment = getAllocationAlignment();
 	uint64_t start = (uint64_t)AlignUpwards(m_min, (size_t)alignment);
 	uint64_t end = (uint64_t)AlignDownwards(m_max, (size_t)alignment);
-	
+
 	if (m_alloc2Supported) {
 		// alignment shrinks area by aligning both towards middle so we don't allocate beyond the given bounds
 		m_dataPool = boundAlloc(start, end, ALLOC_BLOCK_SIZE(m_blockSize) * (uint64_t)m_maxBlocks);
@@ -46,8 +46,8 @@ bool PLH::FBAllocator::initialize()
 			return false;
 		}
 	}
-	
-    m_allocator = new ALLOC_Allocator{ "PLH", (char*)m_dataPool, 
+
+    m_allocator = new ALLOC_Allocator{ "SigilHook", (char*)m_dataPool,
 		m_blockSize, ALLOC_BLOCK_SIZE(m_blockSize), m_maxBlocks, NULL, 0, 0, 0, 0, 0};
 	if (!m_allocator) {
 		return false;
@@ -57,7 +57,7 @@ bool PLH::FBAllocator::initialize()
 	return true;
 }
 
-char* PLH::FBAllocator::allocate()
+char* SIGILHOOK::FBAllocator::allocate()
 {
 	if (m_usedBlocks + 1 == m_maxBlocks) {
 		return 0;
@@ -66,19 +66,19 @@ char* PLH::FBAllocator::allocate()
 	return (char*)ALLOC_Alloc(m_hAllocator, m_blockSize);
 }
 
-char* PLH::FBAllocator::callocate(uint8_t num)
+char* SIGILHOOK::FBAllocator::callocate(uint8_t num)
 {
 	m_usedBlocks += num;
 	return (char*)ALLOC_Calloc(m_hAllocator, num, m_blockSize);
 }
 
-void PLH::FBAllocator::deallocate(char* mem)
+void SIGILHOOK::FBAllocator::deallocate(char* mem)
 {
 	m_usedBlocks--;
 	ALLOC_Free(m_hAllocator, mem);
 }
 
-bool PLH::FBAllocator::inRange(uint64_t addr)
+bool SIGILHOOK::FBAllocator::inRange(uint64_t addr)
 {
 	if (addr >= m_min && addr < m_max) {
 		return true;
@@ -86,7 +86,7 @@ bool PLH::FBAllocator::inRange(uint64_t addr)
 	return false;
 }
 
-bool PLH::FBAllocator::intersectsRange(uint64_t min, uint64_t max)
+bool SIGILHOOK::FBAllocator::intersectsRange(uint64_t min, uint64_t max)
 {
 	uint64_t _min = std::max(m_min, min);
 	uint64_t _max = std::min(m_max, max);
@@ -95,7 +95,7 @@ bool PLH::FBAllocator::intersectsRange(uint64_t min, uint64_t max)
 	return false;
 }
 
-uint8_t PLH::FBAllocator::intersectionLoadFactor(uint64_t min, uint64_t max)
+uint8_t SIGILHOOK::FBAllocator::intersectionLoadFactor(uint64_t min, uint64_t max)
 {
 	assert(intersectsRange(min, max));
 	uint64_t _min = std::max(m_min, min);
@@ -104,13 +104,13 @@ uint8_t PLH::FBAllocator::intersectionLoadFactor(uint64_t min, uint64_t max)
 	return (uint8_t)((intersectLength / (max - min)) * 100.0);
 }
 
-PLH::RangeAllocator::RangeAllocator(uint8_t blockSize, uint8_t blockCount)
+SIGILHOOK::RangeAllocator::RangeAllocator(uint8_t blockSize, uint8_t blockCount)
 {
 	m_maxBlocks = blockCount;
 	m_blockSize = blockSize;
 }
 
-std::shared_ptr<PLH::FBAllocator> PLH::RangeAllocator::findOrInsertAllocator(uint64_t min, uint64_t max)
+std::shared_ptr<SIGILHOOK::FBAllocator> SIGILHOOK::RangeAllocator::findOrInsertAllocator(uint64_t min, uint64_t max)
 {
 	for (auto& allocator : m_allocators) {
 		if (allocator->inRange(min) && allocator->inRange(max - 1)) {
@@ -126,7 +126,7 @@ std::shared_ptr<PLH::FBAllocator> PLH::RangeAllocator::findOrInsertAllocator(uin
 	return allocator;
 }
 
-char* PLH::RangeAllocator::allocate(uint64_t min, uint64_t max)
+char* SIGILHOOK::RangeAllocator::allocate(uint64_t min, uint64_t max)
 {
 	static bool is32 = sizeof(void*) == 4;
 	if (is32 && max > 0x7FFFFFFF) {
@@ -144,7 +144,7 @@ char* PLH::RangeAllocator::allocate(uint64_t min, uint64_t max)
 	return addr;
 }
 
-void PLH::RangeAllocator::deallocate(uint64_t addr)
+void SIGILHOOK::RangeAllocator::deallocate(uint64_t addr)
 {
 	std::lock_guard<std::mutex> m_lock(m_mutex);
 	if (auto it{ m_allocMap.find(addr) }; it != std::end(m_allocMap)) {

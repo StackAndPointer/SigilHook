@@ -1,10 +1,10 @@
 #include <Catch.hpp>
 
-#include "polyhook2/Detour/ILCallback.hpp"
+#include "sigilhook/Detour/ILCallback.hpp"
 
 #pragma warning( disable : 4244)
 
-#include "polyhook2/Tests/TestEffectTracker.hpp"
+#include "sigilhook/Tests/TestEffectTracker.hpp"
 
 /**These tests can spontaneously fail if the compiler desides to optimize away
 the handler or inline the function. NOINLINE attempts to fix the latter, the former
@@ -17,7 +17,7 @@ auto arch = asmjit::Arch::kHost;
 
 typedef int(* Func)();
 
-#include "polyhook2/Detour/x86Detour.hpp"
+#include "sigilhook/Detour/x86Detour.hpp"
 
 NOINLINE void hookMeInt(int a) {
     volatile int var = 1;
@@ -65,8 +65,8 @@ NOINLINE void __fastcall hookMeIntFloatDoubleFst(int a, float b, double c) {
 }
 
 NOINLINE void
-myCallback(const PLH::ILCallback::Parameters* p, const uint8_t count, const PLH::ILCallback::ReturnValue* retVal) {
-    PH_UNUSED(retVal);
+myCallback(const SIGILHOOK::ILCallback::Parameters* p, const uint8_t count, const SIGILHOOK::ILCallback::ReturnValue* retVal) {
+    SIGILHOOK_UNUSED(retVal);
     printf("Argument Count: %d\n", count);
     for (int i = 0; i < count; i++) {
         printf("Arg: %d asInt:%d asFloat:%f asDouble:%f\n", i, p->getArg<int>(i), p->getArg<float>(i),
@@ -82,13 +82,13 @@ myCallback(const PLH::ILCallback::Parameters* p, const uint8_t count, const PLH:
 }
 
 TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
-    PLH::ILCallback callback;
+    SIGILHOOK::ILCallback callback;
 
     SECTION("Integer argument") {
         uint64_t JIT = callback.getJitFunc("void", {"int"}, arch, &myCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeInt, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeInt, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -101,7 +101,7 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"float"}, arch, &myCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeFloat, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeFloat, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -114,7 +114,7 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &myCallback, "stdcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeIntFloatDoubleStd, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeIntFloatDoubleStd, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -127,7 +127,7 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &myCallback, "cdecl");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeIntFloatDoubleCdl, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeIntFloatDoubleCdl, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -140,7 +140,7 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &myCallback, "fastcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeIntFloatDoubleFst, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeIntFloatDoubleFst, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -153,7 +153,7 @@ TEST_CASE("Minimal ILCallback", "[AsmJit][ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &myCallback, "fastcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &hookMeIntFloatDoubleFst, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &hookMeIntFloatDoubleFst, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -209,11 +209,11 @@ NOINLINE void rw_host(int a, float b, double c) {
 }
 
 NOINLINE void mySecondCallback(
-    const PLH::ILCallback::Parameters* p,
+    const SIGILHOOK::ILCallback::Parameters* p,
     const uint8_t count,
-    const PLH::ILCallback::ReturnValue* retVal
+    const SIGILHOOK::ILCallback::ReturnValue* retVal
 ) {
-    PH_UNUSED(retVal);
+    SIGILHOOK_UNUSED(retVal);
     printf("Argument Count: %d\n", count);
     for (int i = 0; i < count; i++) {
         printf("Arg: %d asInt:%d asFloat:%f asDouble:%f\n", i, p->getArg<int>(i), p->getArg<float>(i),
@@ -233,13 +233,13 @@ NOINLINE void mySecondCallback(
 }
 
 TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
-    PLH::ILCallback callback;
+    SIGILHOOK::ILCallback callback;
 
     SECTION("Int, float, double arguments host") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &mySecondCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_host, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_host, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -252,7 +252,7 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &mySecondCallback, "fastcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_fst, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_fst, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -265,7 +265,7 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &mySecondCallback, "cdecl");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_cdecl, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_cdecl, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -278,7 +278,7 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("void", {"int", "float", "double"}, arch, &mySecondCallback, "stdcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_std, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_std, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
 
@@ -290,7 +290,7 @@ TEST_CASE("ILCallback Argument re-writing", "[ILCallback]") {
 }
 
 NOINLINE int rw_ret_host(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -303,7 +303,7 @@ NOINLINE int rw_ret_host(int a, float b, double c, int usageType) {
 }
 
 NOINLINE float rw_ret_host_float(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -316,7 +316,7 @@ NOINLINE float rw_ret_host_float(int a, float b, double c, int usageType) {
 }
 
 NOINLINE double rw_ret_host_double(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -329,7 +329,7 @@ NOINLINE double rw_ret_host_double(int a, float b, double c, int usageType) {
 }
 
 NOINLINE int __fastcall rw_ret_fst_int(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -342,7 +342,7 @@ NOINLINE int __fastcall rw_ret_fst_int(int a, float b, double c, int usageType) 
 }
 
 NOINLINE int __cdecl rw_ret_cdecl_int(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -355,7 +355,7 @@ NOINLINE int __cdecl rw_ret_cdecl_int(int a, float b, double c, int usageType) {
 }
 
 NOINLINE int __stdcall rw_ret_std_int(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -368,7 +368,7 @@ NOINLINE int __stdcall rw_ret_std_int(int a, float b, double c, int usageType) {
 }
 
 NOINLINE float __fastcall rw_ret_fst_float(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -381,7 +381,7 @@ NOINLINE float __fastcall rw_ret_fst_float(int a, float b, double c, int usageTy
 }
 
 NOINLINE float __cdecl rw_ret_cdecl_float(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -394,7 +394,7 @@ NOINLINE float __cdecl rw_ret_cdecl_float(int a, float b, double c, int usageTyp
 }
 
 NOINLINE float __stdcall rw_ret_std_float(int a, float b, double c, int usageType) {
-    PH_UNUSED(usageType);
+    SIGILHOOK_UNUSED(usageType);
     volatile float ans = 0.0f;
     ans += (float) a;
     ans += (float) c;
@@ -407,9 +407,9 @@ NOINLINE float __stdcall rw_ret_std_float(int a, float b, double c, int usageTyp
 }
 
 NOINLINE void myThirdCallback(
-    const PLH::ILCallback::Parameters* p,
+    const SIGILHOOK::ILCallback::Parameters* p,
     const uint8_t count,
-    const PLH::ILCallback::ReturnValue* retVal
+    const SIGILHOOK::ILCallback::ReturnValue* retVal
 ) {
     printf("Argument Count: %d\n", count);
     for (int i = 0; i < count; i++) {
@@ -438,16 +438,17 @@ NOINLINE void myThirdCallback(
             break;
         default: printf("Unknown Mode, NOT modifying ret val!\n");
     }
+    const_cast<SIGILHOOK::ILCallback::ReturnValue*>(retVal)->m_overrideReturn = 1;
 }
 
 TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
-    PLH::ILCallback callback;
+    SIGILHOOK::ILCallback callback;
 
     SECTION("Minimal host, int, float, double, int return") {
         uint64_t JIT = callback.getJitFunc("int", {"int", "float", "double", "int"}, arch, &myThirdCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_host, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_host, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -462,7 +463,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("float", {"int", "float", "double", "int"}, arch, &myThirdCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_host_float, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_host_float, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -477,7 +478,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("double", {"int", "float", "double", "int"}, arch, &myThirdCallback);
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_host_double, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_host_double, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -493,7 +494,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("int", {"int", "float", "double", "int"}, arch, &myThirdCallback, "stdcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_std_int, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_std_int, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -509,7 +510,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("int", {"int", "float", "double", "int"}, arch, &myThirdCallback, "cdecl");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_cdecl_int, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_cdecl_int, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -525,7 +526,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
                                            "fastcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_fst_int, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_fst_int, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -541,7 +542,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
                                            "fastcall");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_fst_float, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_fst_float, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -557,7 +558,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         uint64_t JIT = callback.getJitFunc("float", {"int", "float", "double", "int"}, arch, &myThirdCallback, "cdecl");
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_cdecl_float, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_cdecl_float, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
@@ -575,7 +576,7 @@ TEST_CASE("ILCallback Return and Argument Re-Writing", "[ILCallback]") {
         );
         REQUIRE(JIT != 0);
 
-        PLH::x86Detour detour((uint64_t) &rw_ret_std_float, (uint64_t) JIT, callback.getTrampolineHolder());
+        SIGILHOOK::x86Detour detour((uint64_t) &rw_ret_std_float, (uint64_t) JIT, callback.getTrampolineHolder());
         REQUIRE(detour.hook() == true);
 
         effectsNTD.PushEffect();
