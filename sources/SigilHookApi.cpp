@@ -173,19 +173,56 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
     result->m_callOriginal = 1;
     result->m_overrideReturn = 0;
     std::shared_ptr<JitRecord> record = slot < kJitSlotCount ? g_jitSlots[slot].load(std::memory_order_acquire) : nullptr;
-    if (record == nullptr || !record->userCallback) return;
+    if (record == nullptr || !record->userCallback || parameters == nullptr) return;
+
+    auto* registers = reinterpret_cast<sigilhook_register_context*>(const_cast<uint64_t*>(parameters->m_registers));
+    const size_t availableRegisters = currentMode() == SIGILHOOK::Mode::x64 ? SIGILHOOK_REGISTER_COUNT : SIGILHOOK_REGISTER_R8;
+    for (size_t index = availableRegisters; index < SIGILHOOK_REGISTER_COUNT; ++index) {
+        registers->registers[index] = 0;
+    }
+    registers->write_mask = 0;
+
     std::vector<uint64_t> arguments(count);
+    std::vector<uint64_t> originalArguments(count);
+    const auto& layout = record->callback->callLayout();
     for (uint8_t index = 0; index < count; ++index) {
         const uint8_t width = index < record->argumentWidths.size() ? record->argumentWidths[index] : sizeof(uint64_t);
         arguments[index] = readArgument(parameters, index, width);
+        originalArguments[index] = arguments[index];
+        if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Register) {
+            const uint8_t reg = layout.arguments[index].reg;
+            const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
+            registers->registers[reg] = arguments[index] & mask;
+        }
     }
+
     sigilhook_call_frame frame{
-        arguments.data(), count, &result->m_retVal, &result->m_callOriginal, &result->m_overrideReturn
+        arguments.data(), count, &result->m_retVal, &result->m_callOriginal, &result->m_overrideReturn, registers
     };
     record->userCallback(&frame, record->userData);
+
     for (uint8_t index = 0; index < count; ++index) {
         const uint8_t width = index < record->argumentWidths.size() ? record->argumentWidths[index] : sizeof(uint64_t);
+        if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Register) {
+            const uint8_t reg = layout.arguments[index].reg;
+            const uint64_t bit = uint64_t{1} << reg;
+            // Explicit argument edits win over the mapped register alias.
+            const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
+            if ((registers->write_mask & bit) != 0 && arguments[index] == originalArguments[index]) {
+                arguments[index] = registers->registers[reg] & mask;
+            } else {
+                registers->registers[reg] = arguments[index] & mask;
+            }
+        }
         writeArgument(parameters, index, width, arguments[index]);
+    }
+
+    if (layout.returnRegister >= 0) {
+        const uint8_t reg = static_cast<uint8_t>(layout.returnRegister);
+        if ((registers->write_mask & (uint64_t{1} << reg)) != 0) {
+            result->m_retVal = registers->registers[reg];
+            result->m_overrideReturn = 1;
+        }
     }
 }
 template<size_t Slot>
@@ -294,11 +331,63 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020002;
+    return 0x00020003;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
     return currentMode() == SIGILHOOK::Mode::x64 ? SIGILHOOK_MODE_X64 : SIGILHOOK_MODE_X86;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_register(
+    const sigilhook_call_frame* frame, sigilhook_register reg, uint64_t* outValue) {
+    if (frame == nullptr || frame->registers == nullptr || outValue == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame, register context, and output are required");
+    }
+    if (reg < 0 || reg >= SIGILHOOK_REGISTER_COUNT) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Register index is out of range");
+    }
+    if (currentMode() != SIGILHOOK::Mode::x64 && reg >= SIGILHOOK_REGISTER_R8) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "R8-R15 are unavailable in x86 callback frames");
+    }
+    *outValue = frame->registers->registers[reg];
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_register(
+    sigilhook_call_frame* frame, sigilhook_register reg, uint64_t value) {
+    if (frame == nullptr || frame->registers == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame and register context are required");
+    }
+    if (reg < 0 || reg >= SIGILHOOK_REGISTER_COUNT) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Register index is out of range");
+    }
+    if (currentMode() != SIGILHOOK::Mode::x64 && reg >= SIGILHOOK_REGISTER_R8) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "R8-R15 are unavailable in x86 callback frames");
+    }
+    if (reg == SIGILHOOK_REGISTER_SP) {
+        return fail(SIGILHOOK_ERROR_UNSUPPORTED, "SP is read-only in callback frames");
+    }
+    frame->registers->registers[reg] = value;
+    frame->registers->write_mask |= uint64_t{1} << reg;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_flags(
+    const sigilhook_call_frame* frame, uint64_t* outFlags) {
+    if (frame == nullptr || frame->registers == nullptr || outFlags == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame, register context, and output are required");
+    }
+    *outFlags = frame->registers->flags;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_flags(
+    sigilhook_call_frame* frame, uint64_t flags) {
+    if (frame == nullptr || frame->registers == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame and register context are required");
+    }
+    frame->registers->flags = flags;
+    return SIGILHOOK_OK;
 }
 
 const char* SIGILHOOK_CALL sigilhook_status_string(sigilhook_status status) {
@@ -662,7 +751,9 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_jit_callback(
             callConvention == nullptr ? std::string() : std::string(callConvention));
         if (owner->codeAddress == 0) {
             g_jitSlots[slot].store({}, std::memory_order_release);
-            return fail(SIGILHOOK_ERROR_SCRIPT, "Failed to generate the JIT callback");
+            const sigilhook_status status = owner->callback->lastErrorStatus();
+            const std::string message = owner->callback->lastError();
+            return fail(status, message.empty() ? "Failed to generate the JIT callback" : message);
         }
         const uint64_t key = g_nextKey++;
         {

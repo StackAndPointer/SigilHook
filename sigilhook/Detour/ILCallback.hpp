@@ -1,20 +1,29 @@
+// SPDX-License-Identifier: MIT
+// Derived from PolyHook 2; see LICENSE and THIRD_PARTY_NOTICES.md.
 #ifndef SIGILHOOK_ILCALLBACK_HPP
 #define SIGILHOOK_ILCALLBACK_HPP
 
-#pragma warning(push, 0)  
+#pragma warning(push, 0)
 #include <asmjit/x86.h>
-#pragma warning( pop )
+#pragma warning(pop)
 
-#pragma warning( disable : 4200)
+#pragma warning(disable : 4200)
+#include "include/sigilhook.h"
 #include "sigilhook/SigilHookOs.hpp"
 #include "sigilhook/ErrorLog.hpp"
 #include "sigilhook/Enums.hpp"
 #include "sigilhook/MemAccessor.hpp"
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 namespace SIGILHOOK {
 	class ILCallback : public MemAccessor {
 	public:
 		struct Parameters {
+			static constexpr uint8_t kMaxArguments = 32;
+
 			template<typename T>
 			void setArg(const uint8_t idx, const T val) const {
 				*(T*)getArgPtr(idx) = val;
@@ -25,11 +34,14 @@ namespace SIGILHOOK {
 				return *(T*)getArgPtr(idx);
 			}
 
-			// asm depends on this specific type
-			// we the ILCallback allocates stack space that is set to point here
-			volatile uint64_t m_arguments;
+			// The generated stub and the callback bridge depend on this layout.
+			volatile uint64_t m_arguments[kMaxArguments];
+			uint64_t m_registers[SIGILHOOK_REGISTER_COUNT];
+			uint64_t m_flags;
+			uint64_t m_writeMask;
+			uint64_t m_entryStack;
+
 		private:
-			// must be char* for aliasing rules to work when reading back out
 			char* getArgPtr(const uint8_t idx) const {
 				return ((char*)&m_arguments) + sizeof(uint64_t) * idx;
 			}
@@ -44,36 +56,76 @@ namespace SIGILHOOK {
 			uint8_t m_overrideReturn;
 		};
 
+		struct ArgumentLocation {
+			enum class Kind : uint8_t {
+				Register,
+				Stack
+			};
+
+			Kind kind = Kind::Register;
+			uint8_t reg = SIGILHOOK_REGISTER_AX;
+			int32_t stackOffset = 0;
+		};
+
+		struct CallLayout {
+			bool usercall = false;
+			uint32_t calleeCleanup = 0;
+			uint32_t stackArgumentBytes = 0;
+			int returnRegister = -1;
+			std::vector<ArgumentLocation> arguments;
+		};
+
 		typedef void(*tUserCallback)(const Parameters* params, const uint8_t count, const ReturnValue* ret);
 
 		ILCallback();
 		~ILCallback();
 
-		/* Construct a callback given the raw signature at runtime. 'Callback' param is the C stub to transfer to,
-		where parameters can be modified through a structure which is written back to the parameter slots depending
-		on calling convention.*/
 		uint64_t getJitFunc(const asmjit::FuncSignature& sig, const asmjit::Arch arch, const tUserCallback callback);
 
-		/* Construct a callback given the typedef as a string. Types are any valid C/C++ data type (basic types), and pointers to
-		anything are just a uintptr_t. Calling convention is defaulted to whatever is typical for the compiler you use, you can override with
-		stdcall, fastcall, or cdecl (cdecl is default on x86). On x64 those map to the same thing.*/
-		uint64_t getJitFunc(const std::string& retType, const std::vector<std::string>& paramTypes, const asmjit::Arch arch, const tUserCallback callback, std::string callConv = "");
+		// Supported standard conventions are cdecl, stdcall, fastcall, thiscall, and vectorcall.
+		// A custom convention has the form:
+		//   usercall:ret=eax;arg0=ecx;arg1=stack+8;cleanup=8
+		uint64_t getJitFunc(
+			const std::string& retType,
+			const std::vector<std::string>& paramTypes,
+			const asmjit::Arch arch,
+			const tUserCallback callback,
+			std::string callConv = "");
+
 		uint64_t* getTrampolineHolder();
 		uint8_t getTypeWidth(const std::string& type) const;
+		const CallLayout& callLayout() const;
+		sigilhook_status lastErrorStatus() const;
+		const std::string& lastError() const;
+
 	private:
-		// does a given type fit in a general purpose register (i.e. is it integer type)
 		bool isGeneralReg(const asmjit::TypeId typeId) const;
-		// float, double, simd128
 		bool isXmmReg(const asmjit::TypeId typeId) const;
 
-		asmjit::CallConvId getCallConv(const std::string& conv);
+		asmjit::CallConvId getCallConv(const std::string& conv) const;
 		asmjit::TypeId getTypeId(const std::string& type) const;
+		bool parseCallLayout(
+			const std::string& callConv,
+			const std::string& retType,
+			const std::vector<std::string>& paramTypes,
+			asmjit::Arch arch,
+			asmjit::CallConvId* outCallConv,
+			std::string* outError);
+		uint64_t getUsercallJitFunc(
+			const std::string& retType,
+			const std::vector<std::string>& paramTypes,
+			asmjit::Arch arch,
+			const tUserCallback callback);
+
+		bool fail(const std::string& message);
+		uint64_t allocateCode(asmjit::CodeHolder& code, asmjit::StringLogger& logger);
 
 		uint64_t m_callbackBuf;
 		asmjit::x86::Mem argsStack;
-
-		// ptr to trampoline allocated by hook, we hold this so user doesn't need to.
 		uint64_t m_trampolinePtr;
+		CallLayout m_callLayout;
+		std::string m_lastError;
+		sigilhook_status m_lastErrorStatus = SIGILHOOK_ERROR_SCRIPT;
 	};
 }
 #endif // SIGILHOOK_ILCALLBACK_HPP
