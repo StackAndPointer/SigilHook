@@ -379,7 +379,11 @@ asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration,
         return 0;
     }
     binding->jit = jit;
-    sigilhook_bind_detour_to_jit(binding->hook, jit, nullptr);
+    if (sigilhook_bind_detour_to_jit(binding->hook, jit, nullptr) != SIGILHOOK_OK) {
+        sigilhook_destroy(binding->hook);
+        sigilhook_destroy_jit_callback(jit);
+        return 0;
+    }
     if (sigilhook_hook(binding->hook) != SIGILHOOK_OK) {
         sigilhook_destroy(binding->hook);
         sigilhook_destroy_jit_callback(jit);

@@ -126,6 +126,7 @@ struct JitRecord {
     void* userData = nullptr;
     uint64_t codeAddress = 0;
     std::vector<uint8_t> argumentWidths;
+    std::atomic<uint64_t> boundHook{0};
 };
 
 struct HookRecord {
@@ -344,7 +345,7 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
         return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Target, callback, and output handle are required");
     }
     if (outTrampoline != nullptr) *outTrampoline = 0;
-    return createHook([&](HookRecord& record) {
+    const sigilhook_status status = createHook([&](HookRecord& record) {
         record.trampoline = 0;
 #if defined(SIGILHOOK_ARCH_X64)
         record.hook = std::make_unique<SIGILHOOK::x64Detour>(target, callback, &record.trampoline);
@@ -353,6 +354,11 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
 #endif
         return true;
     }, SIGILHOOK_HOOK_DETOUR, outHook);
+    if (status == SIGILHOOK_OK && outTrampoline != nullptr) {
+        const auto record = findHook(*outHook);
+        if (record != nullptr) *outTrampoline = record->trampoline;
+    }
+    return status;
 }
 
 sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle handle) {
@@ -374,6 +380,7 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle handle) {
     }
     if (record && record->jit && record->jit->callback) {
         *record->jit->callback->getTrampolineHolder() = 0;
+        record->jit->boundHook.store(0, std::memory_order_release);
     }
     return SIGILHOOK_OK;
 }
@@ -677,6 +684,9 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy_jit_callback(sigilhook_jit_han
         std::lock_guard lock(g_registryMutex);
         const auto iterator = g_jits.find(jit.value);
         if (iterator == g_jits.end()) return fail(SIGILHOOK_ERROR_NOT_FOUND, "The JIT handle does not exist");
+        if (iterator->second->boundHook.load(std::memory_order_acquire) != 0) {
+            return fail(SIGILHOOK_ERROR_BUSY, "The JIT callback is still bound to a hook");
+        }
         if (iterator->second->slot < kJitSlotCount) {
             g_jitSlots[iterator->second->slot].store({}, std::memory_order_release);
         }
@@ -693,6 +703,14 @@ sigilhook_status SIGILHOOK_CALL sigilhook_bind_detour_to_jit(
     if (status != SIGILHOOK_OK) return status;
     auto owner = findJit(jit);
     if (!owner) return fail(SIGILHOOK_ERROR_NOT_FOUND, "The JIT handle does not exist");
+    if (record->jit != nullptr && record->jit != owner) {
+        return fail(SIGILHOOK_ERROR_BUSY, "The detour is already bound to another JIT callback");
+    }
+    uint64_t expected = 0;
+    if (!owner->boundHook.compare_exchange_strong(expected, detour.value, std::memory_order_acq_rel) &&
+        expected != detour.value) {
+        return fail(SIGILHOOK_ERROR_BUSY, "The JIT callback is already bound to another hook");
+    }
     record->jit = std::move(owner);
     if (record->jit->callback != nullptr) {
         *record->jit->callback->getTrampolineHolder() = record->trampoline;
