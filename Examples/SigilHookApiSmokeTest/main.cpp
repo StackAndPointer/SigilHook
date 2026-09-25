@@ -58,7 +58,15 @@ int main() {
     CHECK(sigilhook_create_detour(
         reinterpret_cast<uint64_t>(&target), callbackAddress, &hook, &trampoline) == SIGILHOOK_OK);
     CHECK(sigilhook_bind_detour_to_jit(hook, jit, nullptr) == SIGILHOOK_OK);
+    sigilhook_handle secondHook{};
+    CHECK(sigilhook_create_detour(
+        reinterpret_cast<uint64_t>(&target), callbackAddress, &secondHook, nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_bind_detour_to_jit(secondHook, jit, nullptr) == SIGILHOOK_ERROR_BUSY);
+    CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_ERROR_BUSY);
+    CHECK(sigilhook_destroy(secondHook) == SIGILHOOK_OK);
     CHECK(sigilhook_hook(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_get_trampoline(hook, &trampoline) == SIGILHOOK_OK);
+    CHECK(trampoline != 0);
 
     g_testMode = 0;
     CHECK(target(1) == 42);
