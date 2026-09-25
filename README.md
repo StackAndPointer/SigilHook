@@ -37,6 +37,57 @@ Scripts are sorted by filename before loading. The DLL initializes AngelScript o
 a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown
 is intentionally not performed from `DllMain` under the Windows loader lock.
 
+## Calling conventions and registers
+
+`shHookScript` keeps the original three-argument behavior. Use
+`shHookConvention` for `cdecl`, `stdcall`, `fastcall`, `thiscall`, or `vectorcall`.
+AngelScript callbacks can inspect and modify general-purpose registers and flags:
+
+```angelscript
+uint64 value = shReg(SH_REG_CX);
+shSetReg(SH_REG_CX, value + 1);
+shSetFlags(shFlags() | 0x40);
+```
+
+Register names are case-insensitive: `AX/CX/DX/BX/SP/BP/SI/DI/R8..R15`, including
+the usual `EAX/RAX`, `R8D/R8W/R8B` aliases. x86 frames expose only `AX` through
+`DI`. `SP` is read-only. SIMD, segment, control, and debug registers are not
+included. Flags are restored before an original call or final return, but values
+such as direction and trap state should not be relied on across a language ABI.
+
+A mapped argument is available through both `shArg` and its register alias. If
+`shSetArg` explicitly changes that argument, the argument value wins over
+`shSetReg`; otherwise the mapped register write is applied.
+
+## Usercall mappings
+
+`shHookUsercall` describes a custom convention with this grammar:
+
+```text
+usercall:ret=<register>;argN=<register|stack+offset>;cleanup=<bytes>
+```
+
+Every declared parameter must have a unique `argN` mapping. `ret` is required for
+non-void returns and must be `ret=none` for `void`. Register locations cannot be
+duplicated, and `SP` cannot be an argument or return location. A typical x64
+mapping is:
+
+```angelscript
+shHookUsercall(target, "void callback()",
+    "unsigned int:unsigned int,unsigned int,unsigned int",
+    "usercall:ret=rax;arg0=rcx;arg1=rdx;arg2=stack+16");
+```
+
+`stack+offset` is a byte offset from the target function-entry stack pointer. It
+includes the return address and any ABI-reserved stack space, so it is not
+necessarily the first stack argument offset of a compiler-generated caller.
+Offsets must be aligned to the pointer size, cannot overlap the return address,
+and stack argument ranges cannot overlap.
+
+`cleanup` is the byte count removed by an x86 callee and defaults to zero. It is
+accepted only on x86; x64 mappings must omit it or use `cleanup=0`. x86 usercall
+returns wider than 32 bits are not supported.
+
 ## C ABI
 
 The public C interface is `include/sigilhook.h`. It exposes opaque handles and
@@ -45,7 +96,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
 - detours, software breakpoints, and hardware breakpoints
 - IAT, EAT, vfunc-swap, and vtable-swap hooks
 - hook lifecycle and detour configuration
-- JIT callbacks with editable arguments and return values
+- JIT callbacks with editable arguments, return values, GPRs, and flags
 - memory reads, writes, protection changes, and pattern scanning
 - script runtime start, script loading, entry calls, and shutdown
 
