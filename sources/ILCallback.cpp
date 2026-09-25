@@ -293,5 +293,5 @@ PLH::ILCallback::ILCallback() {
 }
 
 PLH::ILCallback::~ILCallback() {
-	
+	delete[] reinterpret_cast<char*>(m_callbackBuf);
 }
