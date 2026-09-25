@@ -190,6 +190,28 @@ void scriptSetReturnU64(asQWORD value) {
     }
 }
 
+asQWORD scriptGetRegister(asBYTE reg) {
+    uint64_t value = 0;
+    sigilhook_call_frame_get_register(
+        g_currentFrame, static_cast<sigilhook_register>(reg), &value);
+    return value;
+}
+
+bool scriptSetRegister(asBYTE reg, asQWORD value) {
+    return sigilhook_call_frame_set_register(
+               g_currentFrame, static_cast<sigilhook_register>(reg), static_cast<uint64_t>(value)) == SIGILHOOK_OK;
+}
+
+asQWORD scriptGetFlags() {
+    uint64_t flags = 0;
+    sigilhook_call_frame_get_flags(g_currentFrame, &flags);
+    return flags;
+}
+
+bool scriptSetFlags(asQWORD flags) {
+    return sigilhook_call_frame_set_flags(g_currentFrame, static_cast<uint64_t>(flags)) == SIGILHOOK_OK;
+}
+
 void scriptCallOriginal() {
     if (g_currentFrame != nullptr && g_currentFrame->call_original != nullptr) {
         *g_currentFrame->call_original = 1;
@@ -325,6 +347,10 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 arg8(uint8)", asFUNCTION(scriptGetArg), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 arg(uint8)", asFUNCTION(scriptGetArgU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setArg(uint8, uint64)", asFUNCTION(scriptSetArgU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 getRegister(uint8)", asFUNCTION(scriptGetRegister), asCALL_CDECL);
+    engine->RegisterGlobalFunction("bool setRegister(uint8, uint64)", asFUNCTION(scriptSetRegister), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 getFlags()", asFUNCTION(scriptGetFlags), asCALL_CDECL);
+    engine->RegisterGlobalFunction("bool setFlags(uint64)", asFUNCTION(scriptSetFlags), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 returnValue()", asFUNCTION(scriptGetReturnU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setReturnValue(uint64)", asFUNCTION(scriptSetReturnU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void callOriginal()", asFUNCTION(scriptCallOriginal), asCALL_CDECL);
@@ -354,7 +380,9 @@ asIScriptFunction* findScriptFunction(const std::string& declaration) {
     return nullptr;
 }
 
-asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration, const std::string& signature) {
+asQWORD scriptHookDetourConvention(
+    asQWORD target, const std::string& callbackDeclaration, const std::string& signature,
+    const std::string& callConvention) {
     if (g_runtime.engine == nullptr) return 0;
     const size_t separator = signature.find(':');
     const std::string returnType = trim(separator == std::string::npos ? signature : signature.substr(0, separator));
@@ -371,7 +399,8 @@ asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration,
     sigilhook_jit_handle jit{};
     uint64_t callbackAddress = 0;
     if (sigilhook_create_jit_callback(
-            returnType.c_str(), parameters.c_str(), "", scriptJitCallback, binding.get(), &jit, &callbackAddress) != SIGILHOOK_OK) {
+            returnType.c_str(), parameters.c_str(), callConvention.c_str(),
+            scriptJitCallback, binding.get(), &jit, &callbackAddress) != SIGILHOOK_OK) {
         return 0;
     }
     if (sigilhook_create_detour(target, callbackAddress, &binding->hook, nullptr) != SIGILHOOK_OK) {
@@ -394,9 +423,14 @@ asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration,
     return handle;
 }
 
+asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration, const std::string& signature) {
+    return scriptHookDetourConvention(target, callbackDeclaration, signature, "");
+}
+
 void registerScriptHookApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint64 hookNative(uint64, uint64)", asFUNCTION(scriptHookNative), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hookDetour(uint64, const string &in, const string &in)", asFUNCTION(scriptHookDetour), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookDetourConvention(uint64, const string &in, const string &in, const string &in)", asFUNCTION(scriptHookDetourConvention), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setFollowCall(uint64, bool)", asFUNCTION(scriptSetFollowCall), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hookBreakpoint(uint64, uint64)", asFUNCTION(scriptHookBreakpoint), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hookHardwareBreakpoint(uint64, uint64, uint64)", asFUNCTION(scriptHookHardwareBreakpoint), asCALL_CDECL);

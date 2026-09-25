@@ -28,6 +28,25 @@ enum SHBuildMode {
     SH_MODE_X64 = 2
 };
 
+enum SHRegister {
+    SH_REG_AX = 0,
+    SH_REG_CX = 1,
+    SH_REG_DX = 2,
+    SH_REG_BX = 3,
+    SH_REG_SP = 4,
+    SH_REG_BP = 5,
+    SH_REG_SI = 6,
+    SH_REG_DI = 7,
+    SH_REG_R8 = 8,
+    SH_REG_R9 = 9,
+    SH_REG_R10 = 10,
+    SH_REG_R11 = 11,
+    SH_REG_R12 = 12,
+    SH_REG_R13 = 13,
+    SH_REG_R14 = 14,
+    SH_REG_R15 = 15
+};
+
 enum SHRttiMode {
     SH_RTTI_NONE = 0,
     SH_RTTI_MSVC = 1,
@@ -61,6 +80,16 @@ void shLog(const string &in message) {
 
 uint64 shHookScript(uint64 target, const string &in callbackDeclaration, const string &in signature) {
     return hookDetour(target, callbackDeclaration, signature);
+}
+
+uint64 shHookConvention(uint64 target, const string &in callbackDeclaration,
+                        const string &in signature, const string &in convention) {
+    return hookDetourConvention(target, callbackDeclaration, signature, convention);
+}
+
+uint64 shHookUsercall(uint64 target, const string &in callbackDeclaration,
+                     const string &in signature, const string &in mapping) {
+    return hookDetourConvention(target, callbackDeclaration, signature, mapping);
 }
 
 uint64 shHookNative(uint64 target, uint64 callback) {
@@ -154,6 +183,22 @@ uint64 shOriginalVFunc(uint64 handle, uint16 index) {
 
 uint64 shArg(uint8 index) {
     return arg(index);
+}
+
+uint64 shReg(SHRegister reg) {
+    return getRegister(uint8(reg));
+}
+
+bool shSetReg(SHRegister reg, uint64 value) {
+    return setRegister(uint8(reg), value);
+}
+
+uint64 shFlags() {
+    return getFlags();
+}
+
+bool shSetFlags(uint64 flags) {
+    return setFlags(flags);
 }
 
 uint8 shArg8(uint8 index) {
