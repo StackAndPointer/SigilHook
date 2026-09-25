@@ -26,4 +26,4 @@ if(POLYHOOK_FEATURE_INLINENTD)
 endif()
 
 get_filename_component(POLYHOOK_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
-include("${POLYHOOK_CMAKE_DIR}/PolyHook_2-targets.cmake")
+include("${POLYHOOK_CMAKE_DIR}/SigilHook-targets.cmake")

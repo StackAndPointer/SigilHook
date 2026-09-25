@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(PolyHook_2)
+project(SigilHook)
 string(TOLOWER ${PROJECT_NAME} LOWERCASE_PROJECT_NAME)
 include(CMakePackageConfigHelpers)
 
@@ -17,7 +17,7 @@ endif()
 #
 option(POLYHOOK_BUILD_DLL "Build dll & lib instead of tests" ON)
 
-option(POLYHOOK_BUILD_SHARED_LIB "Build polyhook2 as shared libary" OFF)
+option(POLYHOOK_BUILD_SHARED_LIB "Build SigilHook as shared library" OFF)
 option(POLYHOOK_BUILD_SHARED_ASMTK "Build asmtk as shared libary" OFF)
 option(POLYHOOK_BUILD_SHARED_ASMJIT "Build asmjit as shared libary" ${POLYHOOK_BUILD_SHARED_ASMTK})
 option(POLYHOOK_BUILD_SHARED_ZYDIS "Build zydis as shared libary" OFF)

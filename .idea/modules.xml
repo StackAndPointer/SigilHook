@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/PolyHook_2_0.iml" filepath="$PROJECT_DIR$/.idea/PolyHook_2_0.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/SigilHook.iml" filepath="$PROJECT_DIR$/.idea/SigilHook.iml" />
     </modules>
   </component>
 </project>

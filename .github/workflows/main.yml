@@ -29,11 +29,11 @@ jobs:
           # Windows
           - os: windows-latest
             build_type: Debug
-            test_bin_path: Debug/PolyHook_2.exe
+            test_bin_path: Debug/SigilHook.exe
 
           - os: windows-latest
             build_type: Release
-            test_bin_path: Release/PolyHook_2.exe
+            test_bin_path: Release/SigilHook.exe
 
           - os: windows-latest
             bitness: 32
@@ -111,7 +111,7 @@ jobs:
       - name: Build tests
         id: build-tests
         if: ${{ matrix.c_compiler != 'gcc' }} # See PLH_TEST_CALLBACK in TestUtils.hpp for the reason
-        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }} --target PolyHook_2
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }} --target SigilHook
 
       - name: Run tests
         if: ${{ steps.build-tests.outcome != 'skipped' }}

@@ -4,12 +4,12 @@ if(POLICY CMP0091)
   cmake_policy(SET CMP0091 NEW) 
 endif()
 
-project(test_polyhook2)
+project(test_sigilhook)
 
-find_package(PolyHook_2 CONFIG REQUIRED)
+find_package(SigilHook CONFIG REQUIRED)
 
 set(CMAKE_CXX_FLAGS "/std:c++latest ${CMAKE_CXX_FLAGS}")
 
-add_executable(test_polyhook2 main.cpp)
-set_property(TARGET test_polyhook2 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-target_link_libraries(test_polyhook2 PRIVATE PolyHook_2::PolyHook_2)
+add_executable(test_sigilhook main.cpp)
+set_property(TARGET test_sigilhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+target_link_libraries(test_sigilhook PRIVATE SigilHook::SigilHook)
