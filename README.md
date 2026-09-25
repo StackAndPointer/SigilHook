@@ -1,31 +1,86 @@
 # SigilHook
 
-SigilHook 是一个基于 PolyHook 2 的 C++20 x86/x64 Hook 库，并集成了 AngelScript 运行时，后续将提供由脚本驱动的 C API。
+SigilHook is an x86/x64 hook runtime derived from PolyHook 2 and powered by
+AngelScript. It exports a stable C ABI and builds an injectable `SigilHook.dll`
+that loads scripts from a directory beside the DLL.
 
-当前仓库保留 PolyHook 2 的 Hook 能力，并通过 CMake 目标 `angelscript` 提供 AngelScript。`POLYHOOK_FEATURE_ANGELSCRIPT` 控制集成，默认开启；`POLYHOOK_USE_EXTERNAL_ANGELSCRIPT=ON` 时使用外部 AngelScript 包。
+## Script layout
 
-## 构建
+Place scripts in:
 
-需要 CMake 3.15+、支持 C++20 的编译器。Windows 上建议使用 Visual Studio 18 的开发者环境：
-
-```powershell
-cmd.exe /d /s /c 'call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" && cmake -S . -B _build-nmake -G "NMake Makefiles" -DPOLYHOOK_BUILD_DLL=ON -DPOLYHOOK_BUILD_ANGELSCRIPT_SMOKE_TEST=ON'
-cmd.exe /d /s /c 'call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" && cmake --build _build-nmake --config Release --target SigilHook AngelScriptSmokeTest'
-cmd.exe /d /s /c 'call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" && ctest --test-dir _build-nmake -C Release --output-on-failure'
+```text
+<SigilHook.dll directory>\SigilHook\*.as
+<SigilHook.dll directory>\SigilHook\*.ash
+<SigilHook.dll directory>\SigilHook\logs\SigilHook.log
 ```
 
-编译产物通常位于：
+AngelScript source files use `.as`. Script headers use `.ash`; they are not C/C++
+headers. The loader supports `#include "helpers.ash"` with relative paths,
+recursive include expansion, depth limits, and cycle/error logging.
 
-- `_build-nmake/SigilHook.lib`：SigilHook 静态库；启用 `POLYHOOK_BUILD_SHARED_LIB=ON` 时会生成 `SigilHook.dll` 和导入库。
-- `_build-nmake/AngelScriptSmokeTest.exe`：AngelScript 运行时冒烟测试。
-- `_install/lib/`：安装后的库文件。
-- `_install/include/`：安装后的 PolyHook、AngelScript 及依赖头文件。
+Each `.as` file is compiled as a separate module. Optional entry points are:
 
-## 许可与致谢
+```angelscript
+void main() {}
+void unload() {}
+```
 
-SigilHook 基于以下开源项目构建，感谢原作者和贡献者：
+Scripts are sorted by filename before loading. The DLL initializes AngelScript on
+a worker thread and reverses hook/script teardown on unload.
 
-- [PolyHook 2](https://github.com/stevemk14ebr/PolyHook_2_0)，Copyright (c) 2018 Stephen Eckels，MIT License。完整许可文本见 [`LICENSE`](LICENSE)。SigilHook 保留并修改了其中的 Hook、反汇编和测试代码。
-- [AngelScript](https://github.com/anjo76/angelscript)，Copyright (c) 2003-2025 Andreas Jönsson，zlib-style permissive license。完整许可文本见 [`third_party/angelscript/LICENSE.md`](third_party/angelscript/LICENSE.md)。AngelScript 作为 vendored runtime 集成，原始许可通知保留在源码目录中。
+## C ABI
 
-使用、修改或再分发本项目时，请分别遵守上述许可条款并保留原始版权与许可通知。SigilHook 不代表 PolyHook 2 或 AngelScript 的官方项目，也未获得其背书。
+The public C interface is `include/sigilhook.h`. It exposes opaque handles and
+`sigilhook_*` functions for:
+
+- detours, software breakpoints, and hardware breakpoints
+- IAT, EAT, vfunc-swap, and vtable-swap hooks
+- hook lifecycle and detour configuration
+- JIT callbacks with editable arguments and return values
+- memory reads, writes, protection changes, and pattern scanning
+- script runtime start, script loading, entry calls, and shutdown
+
+All addresses cross the ABI as `uint64_t`. Hook construction returns status codes
+instead of throwing C++ exceptions across the boundary.
+
+## Building
+
+Build x64 from a Visual Studio developer prompt:
+
+```powershell
+vcvarsall.bat x64
+cmake -S . -B _build-x64 -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release `
+  -DPOLYHOOK_BUILD_DLL=ON -DPOLYHOOK_BUILD_INJECTOR_DLL=ON
+cmake --build _build-x64 --config Release --target SigilHook SigilHookDll
+ctest --test-dir _build-x64 -C Release --output-on-failure
+```
+
+Build x86 with `vcvarsall.bat x86` and `_build-x86`. x86 and x64 DLLs must be
+built separately and injected only into matching processes.
+
+Main artifacts:
+
+```text
+_build-x64/SigilHook.dll
+_build-x64/SigilHook.lib
+_build-x64/SigilHookImport.lib
+_build-x86/SigilHook.dll
+_build-x86/SigilHook.lib
+_build-x86/SigilHookImport.lib
+```
+
+`SigilHook.lib` is the static C++ library. `SigilHookImport.lib` is the import
+library for the exported C ABI in `SigilHook.dll`.
+
+## License and acknowledgements
+
+SigilHook is built from open-source components and thanks their authors:
+
+- [PolyHook 2](https://github.com/stevemk14ebr/PolyHook_2_0), Copyright (c) 2018
+  Stephen Eckels, MIT License. See [`LICENSE`](LICENSE).
+- [AngelScript](https://www.angelcode.com/angelscript/), Copyright (c) 2003-2025
+  Andreas Jonsson, zlib-style permissive license. See
+  [`third_party/angelscript/LICENSE.md`](third_party/angelscript/LICENSE.md).
+
+When using, modifying, or redistributing this project, comply with both licenses
+and retain their copyright and permission notices.
