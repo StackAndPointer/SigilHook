@@ -1,0 +1,466 @@
+#include "include/sigilhook.h"
+
+#include <angelscript.h>
+#include <scriptstdstring.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
+
+namespace {
+
+namespace fs = std::filesystem;
+
+struct ScriptBinding {
+    std::string declaration;
+    asIScriptFunction* callback = nullptr;
+    sigilhook_handle hook{};
+    sigilhook_jit_handle jit{};
+};
+
+struct RuntimeState {
+    asIScriptEngine* engine = nullptr;
+    std::vector<std::unique_ptr<ScriptBinding>> bindings;
+    std::vector<asIScriptModule*> modules;
+    fs::path scriptDirectory;
+    fs::path logPath;
+    std::mutex mutex;
+    std::atomic<bool> started{false};
+};
+
+RuntimeState g_runtime;
+thread_local sigilhook_call_frame* g_currentFrame = nullptr;
+
+void writeLog(const std::string& message) {
+    std::ofstream log(g_runtime.logPath, std::ios::app);
+    if (log) {
+        log << message << '\n';
+    }
+}
+
+std::string trim(const std::string& value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::string loadScriptSource(const fs::path& path, int depth, std::string& error) {
+    if (depth > 16) {
+        error = "include depth exceeds 16";
+        return {};
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = "cannot open " + path.string();
+        return {};
+    }
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    std::string source = buffer.str();
+    std::stringstream output;
+    std::istringstream lines(source);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const std::string stripped = trim(line);
+        if (stripped.rfind("#include", 0) == 0) {
+            const auto quote = stripped.find('"');
+            const auto endQuote = stripped.find('"', quote == std::string::npos ? 0 : quote + 1);
+            if (quote == std::string::npos || endQuote == std::string::npos) {
+                error = "invalid include in " + path.string();
+                return {};
+            }
+            const fs::path includePath = path.parent_path() / stripped.substr(quote + 1, endQuote - quote - 1);
+            std::string included = loadScriptSource(includePath, depth + 1, error);
+            if (!error.empty()) return {};
+            output << included << '\n';
+        } else {
+            output << line << '\n';
+        }
+    }
+    return output.str();
+}
+
+void messageCallback(const asSMessageInfo* message, void*) {
+    if (message == nullptr) return;
+    std::ostringstream line;
+    line << (message->type == asMSGTYPE_ERROR ? "error" : message->type == asMSGTYPE_WARNING ? "warning" : "info")
+         << " " << message->section << ":" << message->row << ":" << message->col << ": " << message->message;
+    writeLog(line.str());
+}
+
+asQWORD scriptReadU64(asQWORD address) {
+    uint64_t value = 0;
+    sigilhook_mem_read(static_cast<uint64_t>(address), &value, sizeof(value), nullptr);
+    return value;
+}
+
+void scriptWriteU64(asQWORD address, asQWORD value) {
+    sigilhook_mem_write(static_cast<uint64_t>(address), &value, sizeof(value), nullptr);
+}
+
+asQWORD scriptFindPattern(asQWORD address, asQWORD size, const std::string& pattern) {
+    uint64_t result = 0;
+    sigilhook_find_pattern(static_cast<uint64_t>(address), static_cast<size_t>(size), pattern.c_str(), &result);
+    return result;
+}
+
+void scriptLog(const std::string& message) {
+    writeLog(message);
+}
+
+void scriptHook(asQWORD handle, int enable) {
+    sigilhook_set_hooked(sigilhook_handle{static_cast<uint64_t>(handle)}, enable);
+}
+
+int scriptIsHooked(asQWORD handle) {
+    int result = 0;
+    sigilhook_is_hooked(sigilhook_handle{static_cast<uint64_t>(handle)}, &result);
+    return result;
+}
+
+void scriptUnhook(asQWORD handle) {
+    sigilhook_unhook(sigilhook_handle{static_cast<uint64_t>(handle)});
+}
+
+void scriptDestroy(asQWORD handle) {
+    sigilhook_destroy(sigilhook_handle{static_cast<uint64_t>(handle)});
+}
+
+void scriptSetMaxDepth(asQWORD handle, asBYTE depth) {
+    sigilhook_set_max_depth(sigilhook_handle{static_cast<uint64_t>(handle)}, depth);
+}
+
+asBYTE scriptGetArg(asBYTE index) {
+    if (g_currentFrame == nullptr || index >= g_currentFrame->argument_count) return 0;
+    return static_cast<asBYTE>(g_currentFrame->arguments[index] & 0xff);
+}
+
+asQWORD scriptGetArgU64(asBYTE index) {
+    if (g_currentFrame == nullptr || index >= g_currentFrame->argument_count) return 0;
+    return g_currentFrame->arguments[index];
+}
+
+void scriptSetArgU64(asBYTE index, asQWORD value) {
+    if (g_currentFrame != nullptr && index < g_currentFrame->argument_count) {
+        g_currentFrame->arguments[index] = static_cast<uint64_t>(value);
+    }
+}
+
+asQWORD scriptGetReturnU64() {
+    return g_currentFrame == nullptr || g_currentFrame->return_value == nullptr ? 0 : *g_currentFrame->return_value;
+}
+
+void scriptSetReturnU64(asQWORD value) {
+    if (g_currentFrame != nullptr && g_currentFrame->return_value != nullptr) {
+        *g_currentFrame->return_value = static_cast<uint64_t>(value);
+    }
+}
+
+void scriptCallOriginal() {
+    if (g_currentFrame != nullptr && g_currentFrame->call_original != nullptr) {
+        *g_currentFrame->call_original = 1;
+    }
+}
+
+void scriptJitCallback(sigilhook_call_frame* frame, void* userData) {
+    auto* binding = static_cast<ScriptBinding*>(userData);
+    if (binding == nullptr || binding->callback == nullptr || g_runtime.engine == nullptr) return;
+
+    sigilhook_call_frame* previous = g_currentFrame;
+    g_currentFrame = frame;
+    asIScriptContext* context = g_runtime.engine->RequestContext();
+    if (context != nullptr) {
+        if (context->Prepare(binding->callback) >= 0) {
+            const int result = context->Execute();
+            if (result != asEXECUTION_FINISHED) {
+                writeLog("script callback did not finish normally: " + binding->declaration);
+            }
+        }
+        g_runtime.engine->ReturnContext(context);
+    }
+    g_currentFrame = previous;
+}
+
+void scriptSetFollowCall(asQWORD handle, int enabled) {
+    sigilhook_set_follow_call_on_target(sigilhook_handle{static_cast<uint64_t>(handle)}, enabled);
+}
+asQWORD scriptHookBreakpoint(asQWORD target, asQWORD callback) {
+    sigilhook_handle hook{};
+    return sigilhook_create_breakpoint(target, callback, &hook) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+asQWORD scriptHookHardwareBreakpoint(asQWORD target, asQWORD callback, asQWORD thread) {
+    sigilhook_handle hook{};
+    return sigilhook_create_hardware_breakpoint(target, callback, static_cast<uintptr_t>(thread), &hook) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+asQWORD scriptHookIat(const std::string& dll, const std::string& api, const std::string& module, asQWORD callback) {
+    sigilhook_handle hook{};
+    return sigilhook_create_iat_hook(dll.c_str(), api.c_str(), module.c_str(), callback, &hook, nullptr) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+asQWORD scriptHookEat(const std::string& api, const std::string& module, asQWORD callback) {
+    sigilhook_handle hook{};
+    return sigilhook_create_eat_hook(api.c_str(), module.c_str(), callback, &hook, nullptr) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+asQWORD scriptHookVFunc(asQWORD object, asWORD index, asQWORD replacement) {
+    sigilhook_vfunc_entry entry{index, replacement};
+    sigilhook_handle hook{};
+    return sigilhook_create_vfunc_swap(object, &entry, 1, &hook) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+asQWORD scriptHookVTable(asQWORD object, asWORD index, asQWORD replacement, asBYTE rttiMode) {
+    sigilhook_vfunc_entry entry{index, replacement};
+    sigilhook_handle hook{};
+    return sigilhook_create_vtable_swap(object, &entry, 1, static_cast<sigilhook_rtti_mode>(rttiMode), &hook) == SIGILHOOK_OK ? hook.value : 0;
+}
+
+void scriptRehook(asQWORD handle) { sigilhook_rehook(sigilhook_handle{static_cast<uint64_t>(handle)}); }
+asBYTE scriptHookType(asQWORD handle) { sigilhook_hook_type type = SIGILHOOK_HOOK_UNKNOWN; sigilhook_get_type(sigilhook_handle{static_cast<uint64_t>(handle)}, &type); return static_cast<asBYTE>(type); }
+void scriptSetDebug(asQWORD handle, int enabled) { sigilhook_set_debug(sigilhook_handle{static_cast<uint64_t>(handle)}, enabled); }
+asQWORD scriptGetTrampoline(asQWORD handle) { uint64_t trampoline = 0; sigilhook_get_trampoline(sigilhook_handle{static_cast<uint64_t>(handle)}, &trampoline); return trampoline; }
+asBYTE scriptGetMaxDepth(asQWORD handle) { uint8_t depth = 0; sigilhook_get_max_depth(sigilhook_handle{static_cast<uint64_t>(handle)}, &depth); return depth; }
+asBYTE scriptGetDetourScheme(asQWORD handle) { uint8_t scheme = 0; sigilhook_get_detour_scheme(sigilhook_handle{static_cast<uint64_t>(handle)}, &scheme); return scheme; }
+void scriptSetDetourScheme(asQWORD handle, asBYTE scheme) { sigilhook_set_detour_scheme(sigilhook_handle{static_cast<uint64_t>(handle)}, scheme); }
+asQWORD scriptGetOriginalVFunc(asQWORD handle, asWORD index) { uint64_t original = 0; sigilhook_get_original_vfunc(sigilhook_handle{static_cast<uint64_t>(handle)}, index, &original); return original; }
+asBYTE scriptMemProtect(asQWORD address, asQWORD size, asBYTE protection) { sigilhook_protect previous = SIGILHOOK_PROT_NONE; sigilhook_mem_protect(static_cast<uint64_t>(address), static_cast<size_t>(size), static_cast<sigilhook_protect>(protection), &previous); return static_cast<asBYTE>(previous); }
+asQWORD scriptPatternSize(const std::string& pattern) { return sigilhook_pattern_size(pattern.c_str()); }
+std::string scriptLastError() { char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); return error; }
+void registerScriptApi(asIScriptEngine* engine) {
+    RegisterStdString(engine);
+    engine->RegisterGlobalFunction("void rehook(uint64)", asFUNCTION(scriptRehook), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 hookType(uint64)", asFUNCTION(scriptHookType), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setDebug(uint64, bool)", asFUNCTION(scriptSetDebug), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 trampoline(uint64)", asFUNCTION(scriptGetTrampoline), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 maxDepth(uint64)", asFUNCTION(scriptGetMaxDepth), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 detourScheme(uint64)", asFUNCTION(scriptGetDetourScheme), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setDetourScheme(uint64, uint8)", asFUNCTION(scriptSetDetourScheme), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 originalVFunc(uint64, uint16)", asFUNCTION(scriptGetOriginalVFunc), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 memProtect(uint64, uint64, uint8)", asFUNCTION(scriptMemProtect), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 patternSize(const string &in)", asFUNCTION(scriptPatternSize), asCALL_CDECL);
+    engine->RegisterGlobalFunction("string lastError()", asFUNCTION(scriptLastError), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void log(const string &in)", asFUNCTION(scriptLog), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 readU64(uint64)", asFUNCTION(scriptReadU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void writeU64(uint64, uint64)", asFUNCTION(scriptWriteU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 findPattern(uint64, uint64, const string &in)", asFUNCTION(scriptFindPattern), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setHooked(uint64, bool)", asFUNCTION(scriptHook), asCALL_CDECL);
+    engine->RegisterGlobalFunction("bool isHooked(uint64)", asFUNCTION(scriptIsHooked), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void unhook(uint64)", asFUNCTION(scriptUnhook), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void destroyHook(uint64)", asFUNCTION(scriptDestroy), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setMaxDepth(uint64, uint8)", asFUNCTION(scriptSetMaxDepth), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 arg8(uint8)", asFUNCTION(scriptGetArg), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 arg(uint8)", asFUNCTION(scriptGetArgU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setArg(uint8, uint64)", asFUNCTION(scriptSetArgU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 returnValue()", asFUNCTION(scriptGetReturnU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setReturnValue(uint64)", asFUNCTION(scriptSetReturnU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void callOriginal()", asFUNCTION(scriptCallOriginal), asCALL_CDECL);
+}
+
+asQWORD scriptHookNative(asQWORD target, asQWORD callback) {
+    sigilhook_handle hook{};
+    if (sigilhook_create_detour(target, callback, &hook, nullptr) != SIGILHOOK_OK) return 0;
+    sigilhook_hook(hook);
+    return hook.value;
+}
+
+asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration, const std::string& signature) {
+    if (g_runtime.engine == nullptr) return 0;
+    const size_t separator = signature.find(':');
+    const std::string returnType = trim(separator == std::string::npos ? signature : signature.substr(0, separator));
+    const std::string parameters = separator == std::string::npos ? "" : signature.substr(separator + 1);
+    asIScriptModule* module = g_runtime.engine->GetModule("SigilHookScripts", asGM_ONLY_IF_EXISTS);
+    if (module == nullptr) return 0;
+    asIScriptFunction* callback = module->GetFunctionByDecl(callbackDeclaration.c_str());
+    if (callback == nullptr) {
+        writeLog("callback declaration not found: " + callbackDeclaration);
+        return 0;
+    }
+
+    auto binding = std::make_unique<ScriptBinding>();
+    binding->declaration = callbackDeclaration;
+    binding->callback = callback;
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    if (sigilhook_create_jit_callback(
+            returnType.c_str(), parameters.c_str(), "", scriptJitCallback, binding.get(), &jit, &callbackAddress) != SIGILHOOK_OK) {
+        return 0;
+    }
+    if (sigilhook_create_detour(target, callbackAddress, &binding->hook, nullptr) != SIGILHOOK_OK) {
+        sigilhook_destroy_jit_callback(jit);
+        return 0;
+    }
+    binding->jit = jit;
+    sigilhook_bind_detour_to_jit(binding->hook, jit, nullptr);
+    if (sigilhook_hook(binding->hook) != SIGILHOOK_OK) {
+        sigilhook_destroy(binding->hook);
+        sigilhook_destroy_jit_callback(jit);
+        return 0;
+    }
+    const uint64_t handle = binding->hook.value;
+    g_runtime.bindings.push_back(std::move(binding));
+    return handle;
+}
+
+void registerScriptHookApi(asIScriptEngine* engine) {
+    engine->RegisterGlobalFunction("uint64 hookNative(uint64, uint64)", asFUNCTION(scriptHookNative), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookDetour(uint64, const string &in, const string &in)", asFUNCTION(scriptHookDetour), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void setFollowCall(uint64, bool)", asFUNCTION(scriptSetFollowCall), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookBreakpoint(uint64, uint64)", asFUNCTION(scriptHookBreakpoint), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookHardwareBreakpoint(uint64, uint64, uint64)", asFUNCTION(scriptHookHardwareBreakpoint), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookIat(const string &in, const string &in, const string &in, uint64)", asFUNCTION(scriptHookIat), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookEat(const string &in, const string &in, uint64)", asFUNCTION(scriptHookEat), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookVFunc(uint64, uint16, uint64)", asFUNCTION(scriptHookVFunc), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hookVTable(uint64, uint16, uint64, uint8)", asFUNCTION(scriptHookVTable), asCALL_CDECL);
+}
+
+bool runEntry(asIScriptModule* module, const char* declaration) {
+    if (module == nullptr) return false;
+    asIScriptFunction* function = module->GetFunctionByDecl(declaration);
+    if (function == nullptr) return true;
+    asIScriptContext* context = g_runtime.engine->CreateContext();
+    if (context == nullptr) return false;
+    const bool result = context->Prepare(function) >= 0 && context->Execute() == asEXECUTION_FINISHED;
+    context->Release();
+    return result;
+}
+
+fs::path modulePath() {
+#if defined(_WIN32)
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&modulePath), &module)) {
+        return fs::current_path();
+    }
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0) return fs::current_path();
+    path.resize(length);
+    return fs::path(path).parent_path();
+#else
+    return fs::current_path();
+#endif
+}
+
+sigilhook_status startRuntime(const fs::path& requestedDirectory) {
+    std::lock_guard lock(g_runtime.mutex);
+    if (g_runtime.started) return SIGILHOOK_OK;
+    g_runtime.scriptDirectory = requestedDirectory.empty() ? modulePath() / "SigilHook" : requestedDirectory;
+    g_runtime.logPath = g_runtime.scriptDirectory / "logs" / "SigilHook.log";
+    std::error_code error;
+    fs::create_directories(g_runtime.logPath.parent_path(), error);
+    g_runtime.engine = asCreateScriptEngine();
+    if (g_runtime.engine == nullptr) return SIGILHOOK_ERROR_SCRIPT;
+    g_runtime.engine->SetMessageCallback(asFUNCTION(messageCallback), nullptr, asCALL_CDECL);
+    registerScriptApi(g_runtime.engine);
+    registerScriptHookApi(g_runtime.engine);
+    g_runtime.started = true;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status loadDirectory(const fs::path& directory) {
+    if (!g_runtime.started) {
+        const sigilhook_status status = startRuntime(directory);
+        if (status != SIGILHOOK_OK) return status;
+    }
+    std::lock_guard lock(g_runtime.mutex);
+    std::vector<fs::path> scripts;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(directory, error)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".as") {
+            scripts.push_back(entry.path());
+        }
+    }
+    if (error) return SIGILHOOK_ERROR_SCRIPT;
+    std::sort(scripts.begin(), scripts.end());
+    for (const fs::path& script : scripts) {
+        std::string sourceError;
+        const std::string source = loadScriptSource(script, 0, sourceError);
+        if (!sourceError.empty()) {
+            writeLog(sourceError);
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
+        asIScriptModule* module = g_runtime.engine->GetModule(script.stem().string().c_str(), asGM_ALWAYS_CREATE);
+        if (module == nullptr || module->AddScriptSection(script.string().c_str(), source.c_str(), source.size()) < 0 ||
+            module->Build() < 0) {
+            writeLog("failed to build " + script.string());
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
+        g_runtime.modules.push_back(module);
+        if (!runEntry(module, "void main()")) {
+            writeLog("entry point failed in " + script.string());
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
+    }
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status stopRuntime() {
+    std::lock_guard lock(g_runtime.mutex);
+    if (!g_runtime.started) return SIGILHOOK_OK;
+    for (auto iterator = g_runtime.modules.rbegin(); iterator != g_runtime.modules.rend(); ++iterator) {
+        runEntry(*iterator, "void unload()");
+    }
+    for (auto& binding : g_runtime.bindings) {
+        sigilhook_destroy(binding->hook);
+        sigilhook_destroy_jit_callback(binding->jit);
+    }
+    g_runtime.bindings.clear();
+    for (asIScriptModule* module : g_runtime.modules) {
+        if (module != nullptr) module->Discard();
+    }
+    g_runtime.modules.clear();
+    if (g_runtime.engine != nullptr) {
+        g_runtime.engine->ShutDownAndRelease();
+        g_runtime.engine = nullptr;
+    }
+    g_runtime.started = false;
+    return SIGILHOOK_OK;
+}
+
+} // namespace
+
+extern "C" {
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_start(const wchar_t* optionalScriptDirectory) {
+    fs::path path;
+    if (optionalScriptDirectory != nullptr) path = optionalScriptDirectory;
+    return startRuntime(path);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop(void) {
+    return stopRuntime();
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_load_directory(const wchar_t* scriptDirectory) {
+    if (scriptDirectory == nullptr || *scriptDirectory == L'\0') {
+        return SIGILHOOK_ERROR_INVALID_ARGUMENT;
+    }
+    return loadDirectory(fs::path(scriptDirectory));
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration) {
+    if (declaration == nullptr) return SIGILHOOK_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(g_runtime.mutex);
+    bool all = true;
+    for (asIScriptModule* module : g_runtime.modules) {
+        all = runEntry(module, declaration) && all;
+    }
+    return all ? SIGILHOOK_OK : SIGILHOOK_ERROR_SCRIPT;
+}
+
+} // extern "C"
