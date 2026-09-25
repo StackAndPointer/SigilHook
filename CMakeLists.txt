@@ -487,3 +487,4 @@ if(MSVC AND POLYHOOK_FEATURE_ANGELSCRIPT AND POLYHOOK_BUILD_ANGELSCRIPT_SMOKE_TE
         set_target_properties(AngelScriptSmokeTest PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     endif()
 endif()
+include(${PROJECT_SOURCE_DIR}/cmake/SigilHookRuntime.cmake)
