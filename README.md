@@ -34,7 +34,8 @@ standard `shReturnEarly(value)` helper combines a return override with skipping
 the original function.
 
 Scripts are sorted by filename before loading. The DLL initializes AngelScript on
-a worker thread and reverses hook/script teardown on unload.
+a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown
+is intentionally not performed from `DllMain` under the Windows loader lock.
 
 ## C ABI
 

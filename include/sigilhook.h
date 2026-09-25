@@ -102,6 +102,7 @@ SIGILHOOK_API void SIGILHOOK_CALL sigilhook_set_log_callback(
     sigilhook_log_callback callback, void* user_data);
 
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
+    // out_trampoline is zero until installation; query sigilhook_get_trampoline after hooking.
     uint64_t target, uint64_t callback, sigilhook_handle* out_hook, uint64_t* out_trampoline);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle hook);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_hook(sigilhook_handle hook);
