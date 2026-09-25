@@ -1,0 +1,118 @@
+name: Win MSVC, Linux GCC, Linux Clang
+
+on: [ push, pull_request, workflow_dispatch ]
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # We want to see all failing combinations, not just the first one.
+      fail-fast: false
+
+      # This matrix sets up 16 combinations, which are a cross product of: OS, Build Type, Bitness and Compiler
+      # Then it excludes 4 combinations where OS is Windows and compiler is Clang. It will be included in the future.
+      # This results in the following 12 combinations:
+      # windows-debug-32-msvc  | windows-debug-64-msvc  | windows-release-32-msvc  | windows-release-64-msvc
+      #   linux-debug-32-gcc   |   linux-debug-64-gcc   |   linux-release-32-gcc   |   linux-release-64-gcc
+      #   linux-debug-32-clang |   linux-debug-64-clang |   linux-release-32-clang |   linux-release-64-clang
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        build_type: [ Debug, Release ]
+        bitness: [ 32, 64 ]
+        compiler: [ native, clang ]
+        exclude:
+          # TODO: Add this in the future
+          - os: windows-latest
+            compiler: clang
+        include:
+          # Windows
+          - os: windows-latest
+            build_type: Debug
+            test_bin_path: Debug/PolyHook_2.exe
+
+          - os: windows-latest
+            build_type: Release
+            test_bin_path: Release/PolyHook_2.exe
+
+          - os: windows-latest
+            bitness: 32
+            arch: -A Win32
+
+          - os: windows-latest
+            bitness: 64
+            arch: -A x64
+
+          ## MSVC
+          - os: windows-latest
+            compiler: native
+            c_compiler: cl
+            cpp_compiler: cl
+
+          # Linux
+          - os: ubuntu-latest
+            test_bin_path: PolyHook_2
+
+          - os: ubuntu-latest
+            bitness: 32
+            arch: -DCMAKE_C_FLAGS="-m32" -DCMAKE_CXX_FLAGS="-m32"
+
+          - os: ubuntu-latest
+            bitness: 64
+            arch: -DCMAKE_C_FLAGS="-m64" -DCMAKE_CXX_FLAGS="-m64"
+
+          ## GCC
+          - os: ubuntu-latest
+            compiler: native
+            c_compiler: gcc
+            cpp_compiler: g++
+
+          ## Clang
+          - os: ubuntu-latest
+            compiler: clang
+            c_compiler: clang
+            cpp_compiler: clang++
+
+    env:
+      BUILD_DIR: "${{ github.workspace }}/build"
+
+    steps:
+      # The default GitHub runner is missing dependencies for cross-compilation
+      - name: Install 32-bit compiler toolchain
+        if: ${{ matrix.bitness == '32' && matrix.os == 'ubuntu-latest' }}
+        run: sudo apt update && sudo apt install gcc-multilib g++-multilib
+
+      - uses: actions/checkout@v5
+        with:
+          submodules: 'recursive'
+
+      - name: Configure CMake for build
+        # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if
+        # you are using a single-configuration generator such as make.
+        # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+        run: >
+          cmake -B ${{ env.BUILD_DIR }}
+          -DPOLYHOOK_BUILD_DLL="ON"
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          ${{ matrix.arch }}
+
+      - name: Build
+        # Build your program with the given configuration. Note that --config is needed because
+        # the default Windows generator is a multi-config generator (Visual Studio generator).
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }}
+
+      - name: Configure CMake for test
+        run: >
+          cmake -B ${{ env.BUILD_DIR }}
+          -DPOLYHOOK_BUILD_DLL="OFF"
+
+      - name: Build tests
+        id: build-tests
+        if: ${{ matrix.c_compiler != 'gcc' }} # See PLH_TEST_CALLBACK in TestUtils.hpp for the reason
+        run: cmake --build ${{ env.BUILD_DIR }} --config ${{ matrix.build_type }} --target PolyHook_2
+
+      - name: Run tests
+        if: ${{ steps.build-tests.outcome != 'skipped' }}
+        run: ${{ env.BUILD_DIR }}/${{ matrix.test_bin_path }}
