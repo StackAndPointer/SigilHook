@@ -73,16 +73,52 @@ typedef struct sigilhook_vfunc_entry {
     uint64_t replacement;
 } sigilhook_vfunc_entry;
 
+typedef enum sigilhook_register {
+    SIGILHOOK_REGISTER_AX = 0,
+    SIGILHOOK_REGISTER_CX = 1,
+    SIGILHOOK_REGISTER_DX = 2,
+    SIGILHOOK_REGISTER_BX = 3,
+    SIGILHOOK_REGISTER_SP = 4,
+    SIGILHOOK_REGISTER_BP = 5,
+    SIGILHOOK_REGISTER_SI = 6,
+    SIGILHOOK_REGISTER_DI = 7,
+    SIGILHOOK_REGISTER_R8 = 8,
+    SIGILHOOK_REGISTER_R9 = 9,
+    SIGILHOOK_REGISTER_R10 = 10,
+    SIGILHOOK_REGISTER_R11 = 11,
+    SIGILHOOK_REGISTER_R12 = 12,
+    SIGILHOOK_REGISTER_R13 = 13,
+    SIGILHOOK_REGISTER_R14 = 14,
+    SIGILHOOK_REGISTER_R15 = 15,
+    SIGILHOOK_REGISTER_COUNT = 16
+} sigilhook_register;
+
+typedef struct sigilhook_register_context {
+    uint64_t registers[SIGILHOOK_REGISTER_COUNT];
+    uint64_t flags;
+    uint64_t write_mask;
+} sigilhook_register_context;
+
 typedef struct sigilhook_call_frame {
     uint64_t* arguments;
     uint8_t argument_count;
     uint64_t* return_value;
     uint8_t* call_original;
     uint8_t* return_value_overridden;
+    sigilhook_register_context* registers;
 } sigilhook_call_frame;
 
 typedef void (SIGILHOOK_CALL *sigilhook_jit_callback)(
     sigilhook_call_frame* frame, void* user_data);
+
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_register(
+    const sigilhook_call_frame* frame, sigilhook_register reg, uint64_t* out_value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_register(
+    sigilhook_call_frame* frame, sigilhook_register reg, uint64_t value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_flags(
+    const sigilhook_call_frame* frame, uint64_t* out_flags);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_flags(
+    sigilhook_call_frame* frame, uint64_t flags);
 
 typedef enum sigilhook_log_level {
     SIGILHOOK_LOG_INFO = 0,
