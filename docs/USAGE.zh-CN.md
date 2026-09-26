@@ -68,6 +68,27 @@ _build-x64/SigilHookImport.lib
 
 `SigilHook.lib` 是静态 C++ 库，`SigilHookImport.lib` 是导出 C ABI 的导入库。CMake 会把标准头复制到所选构建目录的 `SigilHook/SigilHook.ash`。
 
+仓库工作流还会使用 Visual Studio 分别构建 MSVC 和 clang-cl 的
+`Win32`、`x64` 版本。手动工作流接受可选的 `release_tag`；提供该参数时会发布以下
+四个 Windows 压缩包：
+
+```text
+SigilHook-msvc-x86.zip
+SigilHook-msvc-x64.zip
+SigilHook-clang-cl-x86.zip
+SigilHook-clang-cl-x64.zip
+```
+
+每个压缩包都包含可直接部署的目录结构，DLL 旁边同时提供标准 `.ash` 头文件：
+
+```text
+SigilHook.dll
+SigilHook/
+  SigilHook.ash
+```
+
+GCC x86/x64 Job 只负责 Linux 源码构建和测试，不生成 Windows DLL 发布包。
+
 ## 3. 部署与加载
 
 默认脚本目录：
@@ -185,6 +206,27 @@ SH_ERROR_EXCEPTION
 ```
 
 `shHookScript()`、`shDestroyHook()` 等便利函数会像旧接口一样丢弃底层状态。需要可靠错误处理时，使用 `sh...Status` 或显式状态返回函数。
+
+### 完整脚本接口索引
+
+标准头是脚本层的公开 API，函数按用途分组如下：
+
+| 分组 | 函数 |
+| --- | --- |
+| 运行时与状态 | `shIsValidHook`、`shApiVersion`、`shBuildMode`、`shIsX86`、`shIsX64`、`shPointerSize`、`shRegisterAvailable`、`shRegisterWritable`、`shClearLastError`、`shLastError`、`shLog`、`shStatusString` |
+| Hook 创建 | `shHookScript`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
+| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc` |
+| Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
+| 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
+| 寄存器与控制流 | `shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
+| 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
+| 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
+| 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
+| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall` |
+
+具体声明、参数宽度、返回值和 `out` 参数以
+[`scripts/SigilHook.ash`](../scripts/SigilHook.ash) 为准。原生集成应使用对应的
+[`include/sigilhook.h`](../include/sigilhook.h) C ABI 声明。
 
 ### Hook 构造
 
