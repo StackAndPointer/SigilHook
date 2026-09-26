@@ -1,3 +1,4 @@
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 // Derived from PolyHook 2; see LICENSE and THIRD_PARTY_NOTICES.md.
 #ifndef SIGILHOOK_ILCALLBACK_HPP

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 // SigilHook standard AngelScript helpers.
 // Include this file from .as scripts with: #include "SigilHook.ash"

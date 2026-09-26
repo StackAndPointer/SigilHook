@@ -1,3 +1,4 @@
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #ifndef SIGILHOOK_H
 #define SIGILHOOK_H

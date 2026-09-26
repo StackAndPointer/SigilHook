@@ -1,5 +1,8 @@
 # Third-Party Notices
 
+SigilHook modifications and original SigilHook integration code are
+Copyright (c) 2026 StackAndPointer.
+
 SigilHook includes or derives from the following open-source components.
 
 ## PolyHook 2

@@ -1,5 +1,7 @@
 # SigilHook
 
+Copyright (c) 2026 StackAndPointer
+
 SigilHook is an x86/x64 hook runtime derived from PolyHook 2 and powered by
 AngelScript. It exports a stable C ABI and builds an injectable `SigilHook.dll`
 that loads scripts from a directory beside the DLL.
@@ -137,6 +139,9 @@ library for the exported C ABI in `SigilHook.dll`.
 
 ## License and acknowledgements
 
+SigilHook modifications and original SigilHook integration code are
+Copyright (c) 2026 StackAndPointer.
+
 SigilHook is built from open-source components and thanks their authors:
 
 - [PolyHook 2](https://github.com/stevemk14ebr/PolyHook_2_0), Copyright (c) 2018
@@ -144,7 +149,6 @@ SigilHook is built from open-source components and thanks their authors:
 - [AngelScript](https://www.angelcode.com/angelscript/), Copyright (c) 2003-2025
   Andreas Jonsson, zlib-style permissive license. See
   [`third_party/angelscript/LICENSE.md`](third_party/angelscript/LICENSE.md).
-
 - [AsmJit](https://github.com/asmjit/asmjit), Copyright (c) 2008-2025 The AsmJit
   Authors, zlib-style permissive license.
 - [AsmTK](https://github.com/asmjit/asmtk), Copyright (c) 2016 Petr Kobalicek,

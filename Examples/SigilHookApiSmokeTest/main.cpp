@@ -1,3 +1,4 @@
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "sigilhook.h"
 
