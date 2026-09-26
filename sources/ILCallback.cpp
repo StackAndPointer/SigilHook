@@ -146,9 +146,13 @@ asmjit::TypeId SIGILHOOK::ILCallback::getTypeId(const std::string& type) const {
 	return asmjit::TypeId::kVoid;
 }
 
-uint8_t SIGILHOOK::ILCallback::getTypeWidth(const std::string& type) const {
+uint8_t SIGILHOOK::ILCallback::getTypeWidth(const std::string& type, asmjit::Arch arch) const {
 	const asmjit::TypeId typeId = getTypeId(type);
-	return typeId == asmjit::TypeId::kVoid ? 0 : static_cast<uint8_t>(asmjit::TypeUtils::sizeOf(typeId));
+	if (typeId == asmjit::TypeId::kVoid) return 0;
+	if (asmjit::TypeUtils::isAbstract(typeId)) {
+		return static_cast<uint8_t>(pointerSizeFromArch(arch));
+	}
+	return static_cast<uint8_t>(asmjit::TypeUtils::sizeOf(typeId));
 }
 
 const SIGILHOOK::ILCallback::CallLayout& SIGILHOOK::ILCallback::callLayout() const {
@@ -217,7 +221,7 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 	}
 
 	const uint32_t pointerSize = pointerSizeFromArch(arch);
-	const uint8_t returnWidth = getTypeWidth(retType);
+	const uint8_t returnWidth = getTypeWidth(retType, arch);
 	if (retType != "void" && returnWidth == 0) {
 		if (outError != nullptr) *outError = "Unsupported usercall return type: " + retType;
 		return fail("Unsupported usercall return type: " + retType);
@@ -300,7 +304,7 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 			return fail("Duplicate usercall argument mapping: " + key);
 		}
 		assigned[argIndex] = true;
-		const uint8_t width = getTypeWidth(paramTypes[argIndex]);
+		const uint8_t width = getTypeWidth(paramTypes[argIndex], arch);
 		if (width == 0) {
 			if (outError != nullptr) *outError = "Unsupported usercall parameter type: " + paramTypes[argIndex];
 			return fail("Unsupported usercall parameter type: " + paramTypes[argIndex]);
@@ -354,10 +358,10 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 
 	for (size_t left = 0; left < m_callLayout.arguments.size(); ++left) {
 		if (m_callLayout.arguments[left].kind != ArgumentLocation::Kind::Stack) continue;
-		const uint32_t leftWidth = getTypeWidth(paramTypes[left]) == 8 ? 8u : pointerSize;
+		const uint32_t leftWidth = getTypeWidth(paramTypes[left], arch) == 8 ? 8u : pointerSize;
 		for (size_t right = left + 1; right < m_callLayout.arguments.size(); ++right) {
 			if (m_callLayout.arguments[right].kind != ArgumentLocation::Kind::Stack) continue;
-			const uint32_t rightWidth = getTypeWidth(paramTypes[right]) == 8 ? 8u : pointerSize;
+			const uint32_t rightWidth = getTypeWidth(paramTypes[right], arch) == 8 ? 8u : pointerSize;
 			const uint32_t leftStart = static_cast<uint32_t>(m_callLayout.arguments[left].stackOffset);
 			const uint32_t rightStart = static_cast<uint32_t>(m_callLayout.arguments[right].stackOffset);
 			if (leftStart < rightStart + rightWidth && rightStart < leftStart + leftWidth) {
@@ -525,7 +529,7 @@ uint64_t SIGILHOOK::ILCallback::getInvokeJitFunc(
 		for (const auto& location : m_callLayout.arguments) {
 			if (location.kind != ArgumentLocation::Kind::Stack) continue;
 			const size_t index = static_cast<size_t>(&location - m_callLayout.arguments.data());
-			const uint8_t width = getTypeWidth(paramTypes[index]);
+			const uint8_t width = getTypeWidth(paramTypes[index], arch);
 			a.mov(asmjit::x86::edi, asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset));
 			a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::edi, static_cast<int32_t>(index * sizeof(uint64_t))));
 			a.mov(asmjit::x86::dword_ptr(asmjit::x86::esp, location.stackOffset - static_cast<int32_t>(pointerSize)), asmjit::x86::eax);
@@ -787,7 +791,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	code.setLogger(&logger);
 	const bool is64 = arch == asmjit::Arch::kX64;
 	const uint32_t pointerSize = pointerSizeFromArch(arch);
-	const uint8_t returnWidth = getTypeWidth(retType);
+	const uint8_t returnWidth = getTypeWidth(retType, arch);
 	const uint32_t registerCount = is64 ? SIGILHOOK_REGISTER_COUNT : SIGILHOOK_REGISTER_R8;
 	const uint32_t stateSize = sizeof(Parameters);
 	const uint32_t retOffset = stateSize;
@@ -843,7 +847,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 			a.mov(scratch, asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_entryStack)));
 			a.mov(scratch2, asmjit::x86::ptr(scratch, location.stackOffset));
 			a.mov(asmjit::x86::ptr(sp, stateOffset + argOffset), scratch2);
-			if (getTypeWidth(paramTypes[index]) == 8) {
+			if (getTypeWidth(paramTypes[index], arch) == 8) {
 				a.mov(scratch2, asmjit::x86::ptr(scratch, location.stackOffset + 4));
 				a.mov(asmjit::x86::ptr(sp, stateOffset + argOffset + sizeof(uint32_t)), scratch2);
 			}
@@ -886,7 +890,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		if (location.kind != ArgumentLocation::Kind::Stack) continue;
 		const int32_t argOffset = static_cast<int32_t>(offsetof(Parameters, m_arguments)) + static_cast<int32_t>(sizeof(uint64_t) * index);
 		const uint32_t stackDestination = static_cast<uint32_t>(location.stackOffset - static_cast<int32_t>(pointerSize));
-		const uint8_t width = getTypeWidth(paramTypes[index]);
+		const uint8_t width = getTypeWidth(paramTypes[index], arch);
 		if (is64) {
 			a.mov(scratch, asmjit::x86::ptr(stateBase, argOffset));
 			a.mov(asmjit::x86::ptr(sp, stackDestination), scratch);
@@ -1019,7 +1023,7 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	}
 
 	const uint32_t pointerSize = pointerSizeFromArch(arch);
-	bool canUseRegisterStub = (retType == "void" || getTypeWidth(retType) <= pointerSize);
+	bool canUseRegisterStub = (retType == "void" || getTypeWidth(retType, arch) <= pointerSize);
 	for (const std::string& paramType : paramTypes) {
 		const asmjit::TypeId typeId = getTypeId(paramType);
 		// Route all GPR-only signatures through the explicit-layout stub so stack
@@ -1043,7 +1047,7 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 					break;
 				}
 				const asmjit::FuncValue& value = detail.arg(index);
-				const uint32_t width = getTypeWidth(paramTypes[index]);
+				const uint32_t width = getTypeWidth(paramTypes[index], arch);
 				if (isGpFuncValue(value)) {
 					layout.arguments[index].kind = ArgumentLocation::Kind::Register;
 					layout.arguments[index].reg = static_cast<uint8_t>(value.regId());

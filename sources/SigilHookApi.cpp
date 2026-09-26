@@ -818,7 +818,7 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_jit_callback(
         const std::vector<std::string> parameterTypes =
             splitParameters(commaSeparatedParameters == nullptr ? "" : commaSeparatedParameters);
         for (const std::string& parameterType : parameterTypes) {
-            owner->argumentWidths.push_back(owner->callback->getTypeWidth(parameterType));
+            owner->argumentWidths.push_back(owner->callback->getTypeWidth(parameterType, asmjit::Arch::kHost));
         }
         for (size_t index = 0; index < kJitSlotCount; ++index) {
             std::shared_ptr<JitRecord> expected;

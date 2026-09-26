@@ -103,7 +103,9 @@ namespace SIGILHOOK {
 			const std::string& callConv);
 
 		uint64_t* getTrampolineHolder();
-		uint8_t getTypeWidth(const std::string& type) const;
+		uint8_t getTypeWidth(
+			const std::string& type,
+			asmjit::Arch arch = asmjit::Arch::kHost) const;
 		const CallLayout& callLayout() const;
 		sigilhook_status lastErrorStatus() const;
 		const std::string& lastError() const;
