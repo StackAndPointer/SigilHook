@@ -5,6 +5,17 @@
 
 const uint64 SH_INVALID_HANDLE = 0;
 
+const uint8 SH_OK = 0;
+const uint8 SH_ERROR_INVALID_ARGUMENT = 1;
+const uint8 SH_ERROR_NOT_FOUND = 2;
+const uint8 SH_ERROR_UNSUPPORTED = 3;
+const uint8 SH_ERROR_ARCH_MISMATCH = 4;
+const uint8 SH_ERROR_HOOK_FAILED = 5;
+const uint8 SH_ERROR_MEMORY = 6;
+const uint8 SH_ERROR_SCRIPT = 7;
+const uint8 SH_ERROR_BUSY = 8;
+const uint8 SH_ERROR_EXCEPTION = 9;
+
 enum SHHookType {
     SH_HOOK_UNKNOWN = 0,
     SH_HOOK_DETOUR = 1,
@@ -265,4 +276,161 @@ void shSetSharedU64(const string &in name, uint64 value) {
 
 uint64 shSharedU64(const string &in name) {
     return sharedU64(name);
+}
+
+// Status-returning low-level API. These preserve the exact result of the
+// corresponding sigilhook_* C ABI function for callers that need error handling.
+string shStatusString(uint8 status) {
+    return statusString(status);
+}
+
+uint8 shCreateDetour(uint64 target, uint64 callback,
+                     uint64 &out hook, uint64 &out trampoline) {
+    return createDetour(target, callback, hook, trampoline);
+}
+
+uint8 shInstallHook(uint64 handle) {
+    return installHook(handle);
+}
+
+uint8 shDestroyHookStatus(uint64 handle) {
+    return destroyStatus(handle);
+}
+
+uint8 shRemoveHook(uint64 handle) {
+    return removeHook(handle);
+}
+
+uint8 shRehookStatus(uint64 handle) {
+    return rehookStatus(handle);
+}
+
+uint8 shSetHookedStatus(uint64 handle, bool hooked) {
+    return setHookedStatus(handle, hooked);
+}
+
+uint8 shIsHookedStatus(uint64 handle, bool &out hooked) {
+    return isHookedStatus(handle, hooked);
+}
+
+uint8 shHookTypeStatus(uint64 handle, uint8 &out type) {
+    return hookTypeStatus(handle, type);
+}
+
+uint8 shSetDebugStatus(uint64 handle, bool enabled) {
+    return setDebugStatus(handle, enabled);
+}
+
+uint8 shTrampolineStatus(uint64 handle, uint64 &out trampoline) {
+    return trampolineStatus(handle, trampoline);
+}
+
+uint8 shMaxDepthStatus(uint64 handle, uint8 &out depth) {
+    return maxDepthStatus(handle, depth);
+}
+
+uint8 shSetMaxDepthStatus(uint64 handle, uint8 depth) {
+    return setMaxDepthStatus(handle, depth);
+}
+
+uint8 shSetFollowCallStatus(uint64 handle, bool enabled) {
+    return setFollowCallStatus(handle, enabled);
+}
+
+uint8 shDetourSchemeStatus(uint64 handle, uint8 &out scheme) {
+    return detourSchemeStatus(handle, scheme);
+}
+
+uint8 shSetDetourSchemeStatus(uint64 handle, uint8 scheme) {
+    return setDetourSchemeStatus(handle, scheme);
+}
+
+uint8 shCreateBreakpoint(uint64 target, uint64 callback, uint64 &out hook) {
+    return createBreakpoint(target, callback, hook);
+}
+
+uint8 shCreateHardwareBreakpoint(
+    uint64 target, uint64 callback, uint64 thread, uint64 &out hook) {
+    return createHardwareBreakpoint(target, callback, thread, hook);
+}
+
+uint8 shCreateIat(const string &in importedDll, const string &in importedApi,
+                  const string &in moduleName, uint64 callback,
+                  uint64 &out hook, uint64 &out original) {
+    return createIat(importedDll, importedApi, moduleName, callback, hook, original);
+}
+
+uint8 shCreateEat(const string &in exportedApi, const string &in moduleName,
+                  uint64 callback, uint64 &out hook, uint64 &out original) {
+    return createEat(exportedApi, moduleName, callback, hook, original);
+}
+
+uint8 shCreateVFuncEntries(uint64 object, const array<uint16> &in indices,
+                           const array<uint64> &in replacements, uint64 &out hook) {
+    return createVFuncEntries(object, indices, replacements, hook);
+}
+
+uint8 shCreateVTableEntries(uint64 object, const array<uint16> &in indices,
+                            const array<uint64> &in replacements, uint8 rttiMode,
+                            uint64 &out hook) {
+    return createVTableEntries(object, indices, replacements, rttiMode, hook);
+}
+
+uint8 shOriginalVFuncStatus(uint64 handle, uint16 index, uint64 &out original) {
+    return originalVFuncStatus(handle, index, original);
+}
+
+uint8 shCreateScriptJit(const string &in returnType, const string &in parameters,
+                        const string &in convention, const string &in callbackDeclaration,
+                        uint64 &out jit, uint64 &out address) {
+    return createScriptJit(returnType, parameters, convention,
+                           callbackDeclaration, jit, address);
+}
+
+uint8 shDestroyJit(uint64 jit) {
+    return destroyJit(jit);
+}
+
+uint8 shBindDetourToJit(uint64 detour, uint64 jit, uint64 &out hook) {
+    return bindDetourToJit(detour, jit, hook);
+}
+
+array<uint8>@ shReadBytes(uint64 address, uint size) {
+    return readBytes(address, size);
+}
+
+uint8 shWriteBytes(uint64 address, const array<uint8> &in bytes, uint &out written) {
+    return writeBytes(address, bytes, written);
+}
+
+uint8 shMemProtectStatus(uint64 address, uint64 size, uint8 protection,
+                         uint8 &out previous) {
+    return memProtectStatus(address, size, protection, previous);
+}
+
+uint8 shFindPatternStatus(uint64 address, uint64 size, const string &in pattern,
+                          uint64 &out result) {
+    return findPatternStatus(address, size, pattern, result);
+}
+
+uint8 shLoadDirectory(const string &in directory) {
+    return loadDirectory(directory);
+}
+
+uint8 shCallEntry(const string &in declaration) {
+    return callEntry(declaration);
+}
+
+uint8 shSetSharedU64Status(const string &in name, uint64 value) {
+    return setSharedU64Status(name, value);
+}
+
+uint8 shSharedU64Status(const string &in name, uint64 &out value) {
+    return sharedU64Status(name, value);
+}
+
+uint8 shCallUsercall(uint64 target, const string &in returnType,
+                     const string &in parameters, const string &in mapping,
+                     const array<uint64> &in arguments, uint64 &out result) {
+    return invokeUsercall(target, returnType, parameters, mapping, arguments, result);
 }

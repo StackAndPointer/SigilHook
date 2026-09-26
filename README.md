@@ -39,6 +39,29 @@ Scripts are sorted by filename before loading. The DLL initializes AngelScript o
 a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown
 is intentionally not performed from `DllMain` under the Windows loader lock.
 
+## Standard helper API
+
+`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 87
+`sh*` functions. It includes both convenience functions that install immediately
+and status-returning functions that preserve the underlying C ABI result:
+
+- detour creation and `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`,
+  and `usercall` script hooks
+- software breakpoint, hardware breakpoint, IAT, EAT, VFunc, and VTable hooks
+- install, remove, rehook, destroy, state query, trampoline, debug, follow-call,
+  maximum-depth, and x64 detour-scheme controls
+- argument, register, flag, return, original-call, and early-return controls
+- byte-array reads and writes, scalar memory helpers, memory protection, pattern
+  scanning, shared values, script-directory loading, and entry invocation
+- script JIT creation, detour binding, JIT destruction, status strings, and
+  direct `shCallUsercall` invocation
+
+The convenience wrappers discard status where the legacy API historically did;
+use the `sh...Status` or explicit status-returning forms when error handling is
+required. `sigilhook_runtime_start` and `sigilhook_runtime_stop` remain C ABI-only
+because stopping the runtime from inside one of its own scripts would tear down
+the active AngelScript context.
+
 ## Calling conventions and registers
 
 `shHookScript` keeps the original three-argument behavior. Use
@@ -90,6 +113,17 @@ and stack argument ranges cannot overlap.
 accepted only on x86; x64 mappings must omit it or use `cleanup=0`. x86 usercall
 returns wider than 32 bits are not supported.
 
+`shCallUsercall` invokes an arbitrary target with the same mapping grammar:
+
+```angelscript
+array<uint64> args(2);
+args[0] = first;
+args[1] = second;
+uint64 result = 0;
+shCallUsercall(target, "unsigned int", "unsigned int,unsigned int",
+    "usercall:ret=rax;arg0=rcx;arg1=rdx", args, result);
+```
+
 ## C ABI
 
 The public C interface is `include/sigilhook.h`. It exposes opaque handles and
@@ -102,8 +136,9 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
 - memory reads, writes, protection changes, and pattern scanning
 - script runtime start, script loading, entry calls, and shutdown
 
-All addresses cross the ABI as `uint64_t`. Hook construction returns status codes
-instead of throwing C++ exceptions across the boundary.
+The current API version is `0x00020004`. All addresses cross the ABI as `uint64_t`.
+Hook construction returns status codes instead of throwing C++ exceptions across
+the boundary.
 
 ## Building
 

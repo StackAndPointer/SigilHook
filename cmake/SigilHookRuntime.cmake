@@ -1,3 +1,6 @@
+# Copyright (c) 2026 StackAndPointer
+# SPDX-License-Identifier: MIT
+
 if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
     option(SIGILHOOK_BUILD_INJECTOR_DLL "Build the injectable SigilHook.dll runtime" ON)
     option(SIGILHOOK_BUILD_API_SMOKE_TEST "Build the exported C API smoke test" ON)
@@ -13,6 +16,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             ${PROJECT_SOURCE_DIR}/sources/SigilHookRuntime.cpp
             ${PROJECT_SOURCE_DIR}/sources/SigilHookDllMain.cpp
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptstdstring/scriptstdstring.cpp
+            ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptarray/scriptarray.cpp
         )
         set_target_properties(SigilHookDll PROPERTIES
             OUTPUT_NAME SigilHook
@@ -24,6 +28,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/angelscript/include
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptstdstring
+            ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptarray
         )
         target_link_libraries(SigilHookDll PRIVATE ${PROJECT_NAME} ${SIGILHOOK_ANGELSCRIPT_TARGET})
 
@@ -75,6 +80,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}")
             configure_file(${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash" COPYONLY)
             configure_file(${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/scripts/10-test.as "${SIGILHOOK_SCRIPT_TEST_DIR}/10-test.as" COPYONLY)
+            configure_file(${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/scripts/11-status.as "${SIGILHOOK_SCRIPT_TEST_DIR}/11-status.as" COPYONLY)
             add_executable(SigilHookScriptSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/main.cpp
             )
