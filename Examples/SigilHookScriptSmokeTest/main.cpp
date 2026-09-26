@@ -53,6 +53,7 @@ volatile LONG g_virtualTargetCalls = 0;
 volatile LONG g_vfuncCallbackCalls = 0;
 volatile LONG g_vtableCallbackCalls = 0;
 volatile LONG g_hardwareResult = 0;
+volatile LONG g_slowResult = 0;
 
 struct ThisCallTarget {
     NOINLINE int TEST_THISCALL target(int) {
@@ -152,6 +153,11 @@ NOINLINE int SIGILHOOK_CALL vtableCallback() {
 
 DWORD WINAPI hardwareWorker(LPVOID) {
     g_hardwareResult = hardwareTarget(3);
+    return 0;
+}
+
+DWORD WINAPI slowWorker(LPVOID) {
+    g_slowResult = target(1);
     return 0;
 }
 
@@ -259,6 +265,18 @@ bool writeScriptFile(const std::filesystem::path& path, const std::string& sourc
     if (!output) return false;
     output << source;
     return output.good();
+}
+
+bool copyStandardHeader(const std::filesystem::path& directory) {
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) return false;
+    std::filesystem::copy_file(
+        std::filesystem::path(SIGILHOOK_TEST_SCRIPT_DIRECTORY) / "SigilHook.ash",
+        directory / "SigilHook.ash",
+        std::filesystem::copy_options::overwrite_existing,
+        error);
+    return !error;
 }
 
 bool expectScriptLoadFailure(const std::filesystem::path& directory, const char* label) {
@@ -410,6 +428,78 @@ int main() {
     std::filesystem::remove_all(negativeRoot, cleanupError);
     cleanupError.clear();
     CHECK(std::filesystem::create_directories(negativeRoot, cleanupError) && !cleanupError);
+
+    const auto rollbackRoot = negativeRoot / "rollback";
+    CHECK(copyStandardHeader(rollbackRoot));
+    CHECK(sigilhook_runtime_set_shared_u64("rollbackZero", 0) == SIGILHOOK_OK);
+    CHECK(writeScriptFile(rollbackRoot / "main.as", R"SIGIL(
+#include "SigilHook.ash"
+
+void rollbackCallback() {
+    shSetReturn(999);
+    shSkipOriginal();
+}
+
+void main() {
+    if (!shIsValidHook(shHookScript(shSharedU64("target"), "void rollbackCallback()", "int:int"))) {
+        shSetSharedU64("rollbackHookFailed", 1);
+        return;
+    }
+    const uint64 zero = shSharedU64("rollbackZero");
+    const uint64 failure = 1 / zero;
+}
+
+void unload() {
+    shSetSharedU64("rollbackUnloadCount", shSharedU64("rollbackUnloadCount") + 1);
+}
+)SIGIL" ));
+    CHECK(expectScriptLoadFailure(rollbackRoot, "main rollback"));
+    uint64_t rollbackUnloadCount = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("rollbackUnloadCount", &rollbackUnloadCount) == SIGILHOOK_OK);
+    CHECK(rollbackUnloadCount == 1);
+    uint64_t rollbackHookFailed = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("rollbackHookFailed", &rollbackHookFailed) == SIGILHOOK_ERROR_NOT_FOUND);
+    CHECK(target(7) == 8);
+
+    const auto timeoutRoot = negativeRoot / "callback-timeout";
+    CHECK(copyStandardHeader(timeoutRoot));
+    CHECK(sigilhook_runtime_set_shared_u64("slowEntered", 0) == SIGILHOOK_OK);
+    CHECK(writeScriptFile(timeoutRoot / "main.as", R"SIGIL(
+#include "SigilHook.ash"
+
+void slowCallback() {
+    shSetSharedU64("slowEntered", 1);
+    while (true) {}
+}
+
+void main() {
+    if (!shIsValidHook(shHookScript(shSharedU64("target"), "void slowCallback()", "int:int"))) {
+        shSetSharedU64("slowHookFailed", 1);
+    }
+}
+
+void unload() {
+    shSetSharedU64("slowUnloaded", 1);
+}
+)SIGIL" ));
+    CHECK(sigilhook_runtime_load_directory(timeoutRoot.c_str()) == SIGILHOOK_OK);
+    HANDLE slowThread = CreateThread(nullptr, 0, slowWorker, nullptr, 0, nullptr);
+    CHECK(slowThread != nullptr);
+    bool slowEntered = false;
+    for (int attempt = 0; attempt < 100 && !slowEntered; ++attempt) {
+        uint64_t entered = 0;
+        CHECK(sigilhook_runtime_get_shared_u64("slowEntered", &entered) == SIGILHOOK_OK);
+        slowEntered = entered != 0;
+        if (!slowEntered) Sleep(10);
+    }
+    CHECK(slowEntered);
+    CHECK(sigilhook_runtime_stop_with_timeout(100) == SIGILHOOK_OK);
+    CHECK(WaitForSingleObject(slowThread, 5000) == WAIT_OBJECT_0);
+    CHECK(g_slowResult == 2);
+    uint64_t slowUnloaded = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("slowUnloaded", &slowUnloaded) == SIGILHOOK_OK);
+    CHECK(slowUnloaded == 1);
+    CloseHandle(slowThread);
 
     const auto missingMain = negativeRoot / "missing-main";
     CHECK(writeScriptFile(missingMain / "legacy.as", "void legacy() {}\n"));
