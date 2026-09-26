@@ -135,6 +135,16 @@ void verifyHelperApi() {
     if (shReadU64(dataAddress) != 0x1122334455667788 ||
         shFindPattern(dataAddress, 8, "88 77") != dataAddress ||
         shPatternSize("88 ??") != 2) { failHelperTest(); return; }
+    if (shReadU8(dataAddress) != 0x88 || shReadU16(dataAddress) != 0x7788 ||
+        shReadU32(dataAddress) != 0x55667788) { failHelperTest(); return; }
+    shWriteU8(dataAddress, 0xaa);
+    if (shReadU64(dataAddress) != 0x11223344556677aa) { failHelperTest(); return; }
+    shWriteU16(dataAddress, 0xbbcc);
+    if (shReadU64(dataAddress) != 0x112233445566bbcc) { failHelperTest(); return; }
+    shWriteU32(dataAddress, 0xddeeff00);
+    if (shReadU64(dataAddress) != 0x11223344ddeeff00 ||
+        shReadU8(dataAddress) != 0x00 || shReadU16(dataAddress) != 0xff00 ||
+        shReadU32(dataAddress) != 0xddeeff00) { failHelperTest(); return; }
     const uint8 previousProtection = shMemProtect(dataAddress, 8, SH_PROT_RWX);
     shMemProtect(dataAddress, 8, previousProtection);
 }
@@ -144,6 +154,12 @@ void onTarget() {
     if (shArg(0) != 1 || shArg8(0) != 1 || shArg16(0) != 1 ||
         shArg32(0) != 1 || shReturn() != 0) { failHelperTest(); return; }
     shSetArg(0, 41);
+    shSetArg8(0, 0x2a);
+    if (shArg(0) != 0x2a) { failHelperTest(); return; }
+    shSetArg16(0, 0x0123);
+    if (shArg(0) != 0x0123) { failHelperTest(); return; }
+    shSetArg32(0, 41);
+    if (shArg(0) != 41) { failHelperTest(); return; }
     if (shInstructionPointer() != shSharedU64("target") ||
         !shSetInstructionPointer(shTrampoline(g_hook))) { failHelperTest(); return; }
     shSkipOriginal();
@@ -154,6 +170,12 @@ void onConvention() {
     if (shArg(0) != 7 || shArg(1) != 9) { failHelperTest(); return; }
     shSetArg(0, 4);
     shSetArg(1, 2);
+    shSetReturn8(0xa5);
+    if (shReturn8() != 0xa5) { failHelperTest(); return; }
+    shSetReturn16(0xbeef);
+    if (shReturn16() != 0xbeef) { failHelperTest(); return; }
+    shSetReturn32(0x12345678);
+    if (shReturn32() != 0x12345678) { failHelperTest(); return; }
     shSetReturn(402);
     shSkipOriginal();
 }
@@ -164,6 +186,9 @@ void onUsercall() {
         shArg32(2) != 33) { failHelperTest(); return; }
     g_helperStep = 31;
     if (shReg(SH_REG_CX) != 11 || shReg(SH_REG_DX) != 22) { failHelperTest(); return; }
+    if (shReg8(SH_REG_CX) != 11 || shReg16(SH_REG_CX) != 11 ||
+        shReg32(SH_REG_CX) != 11) { failHelperTest(); return; }
+    if (shReg16(SH_REG_CX) != uint16(shReg(SH_REG_CX))) { failHelperTest(); return; }
     g_helperStep = 32;
     if ((shFlags() & 0x40) != 0) { failHelperTest(); return; }
 
@@ -177,6 +202,22 @@ void onUsercall() {
         shSetFlags((shFlags() & ~uint64(0x40)) | 0x40);
     } else if (mode == 1) {
         shSetReg(SH_REG_AX, 0x12345678);
+        const uint64 originalCx = shReg(SH_REG_CX);
+        const uint64 seedUpper = shBuildMode() == SH_MODE_X64
+            ? 0xA5A5000000000000 : 0x12340000;
+        shSetReg(SH_REG_CX, seedUpper | (originalCx & 0xffff));
+        if (!shSetReg8(SH_REG_CX, 0x7a) || shReg8(SH_REG_CX) != 0x7a ||
+            (shReg(SH_REG_CX) & ~uint64(0xff)) != (seedUpper & ~uint64(0xff))) { failHelperTest(); return; }
+        if (!shSetReg16(SH_REG_CX, 0xa5a5) || shReg16(SH_REG_CX) != 0xa5a5 ||
+            (shReg(SH_REG_CX) & ~uint64(0xffff)) != (seedUpper & ~uint64(0xffff))) { failHelperTest(); return; }
+        if (!shSetReg32(SH_REG_CX, 0x1234cafe) || shReg32(SH_REG_CX) != 0x1234cafe) { failHelperTest(); return; }
+        if (shBuildMode() == SH_MODE_X64 &&
+            (shReg(SH_REG_CX) & ~uint64(0xffffffff)) != (seedUpper & ~uint64(0xffffffff))) { failHelperTest(); return; }
+        shSetReg(SH_REG_CX, (originalCx & ~uint64(0xffff)) | 0x4000);
+        if (!shSetReg16(SH_REG_CX, 0xA5A5) ||
+            shReg16(SH_REG_CX) != 0xA5A5 ||
+            shReg(SH_REG_CX) != ((originalCx & ~uint64(0xffff)) | 0xA5A5)) { failHelperTest(); return; }
+        shSetReg(SH_REG_CX, originalCx);
         shSkipOriginal();
     } else {
         shSetReturn(777);
@@ -186,6 +227,11 @@ void onUsercall() {
 
 void onPointerUsercall() {
     if (shArg(0) != shSharedU64("pointerExpected")) { failHelperTest(); return; }
+    const uint64 pointerValue = shArg(0);
+    shSetArg8(0, uint8(pointerValue));
+    shSetArg16(0, uint16(pointerValue));
+    shSetArg32(0, uint32(pointerValue));
+    if (shArg(0) != pointerValue) { failHelperTest(); return; }
     shSetSharedU64("pointerScriptCallbacks", shSharedU64("pointerScriptCallbacks") + 1);
     shKeepOriginal();
 }
@@ -295,6 +341,13 @@ void verify() {
     if (!shIsValidHook(g_vtableHook)) { failHelperTest(); return; }
 
     verifyHelperApi();
+    const bool expectedX86 = shSharedU64("expectedBuildMode") == SH_MODE_X86;
+    if (shIsX86() != expectedX86 || shIsX64() == expectedX86 ||
+        shPointerSize() != (expectedX86 ? 4 : 8) ||
+        !shRegisterAvailable(SH_REG_CX) || !shRegisterWritable(SH_REG_CX) ||
+        shRegisterWritable(SH_REG_SP) ||
+        shRegisterAvailable(SH_REG_R8) != !expectedX86 ||
+        shRegisterWritable(SH_REG_R8) != !expectedX86) { failHelperTest(); return; }
 }
 
 void cleanupTestHooks() {

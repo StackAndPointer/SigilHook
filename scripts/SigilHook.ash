@@ -1,6 +1,8 @@
 // Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 // SigilHook standard AngelScript helpers.
+// This is intentionally one cross-architecture header. Query shBuildMode() at runtime;
+// the DLL and target process must both be x86 or both be x64.
 // Include this file from .as scripts with: #include "SigilHook.ash"
 #pragma once
 
@@ -77,6 +79,26 @@ uint32 shApiVersion() {
 
 uint8 shBuildMode() {
     return buildMode();
+}
+
+bool shIsX86() {
+    return shBuildMode() == SH_MODE_X86;
+}
+
+bool shIsX64() {
+    return shBuildMode() == SH_MODE_X64;
+}
+
+uint8 shPointerSize() {
+    return shIsX64() ? 8 : 4;
+}
+
+bool shRegisterAvailable(SHRegister reg) {
+    return shIsX64() || uint8(reg) < uint8(SH_REG_R8);
+}
+
+bool shRegisterWritable(SHRegister reg) {
+    return reg != SH_REG_SP && shRegisterAvailable(reg);
 }
 
 void shClearLastError() {
@@ -202,8 +224,35 @@ uint64 shReg(SHRegister reg) {
     return getRegister(uint8(reg));
 }
 
+uint8 shReg8(SHRegister reg) {
+    return uint8(shReg(reg));
+}
+
 bool shSetReg(SHRegister reg, uint64 value) {
     return setRegister(uint8(reg), value);
+}
+
+bool shSetReg8(SHRegister reg, uint8 value) {
+    const uint64 current = shReg(reg);
+    return shSetReg(reg, (current & ~uint64(0xff)) | uint64(value));
+}
+
+uint16 shReg16(SHRegister reg) {
+    return uint16(shReg(reg) & 0xffff);
+}
+
+uint32 shReg32(SHRegister reg) {
+    return uint32(shReg(reg) & 0xffffffff);
+}
+
+bool shSetReg16(SHRegister reg, uint16 value) {
+    const uint64 current = shReg(reg);
+    return shSetReg(reg, (current & ~uint64(0xffff)) | uint64(value));
+}
+
+bool shSetReg32(SHRegister reg, uint32 value) {
+    const uint64 current = shReg(reg);
+    return shSetReg(reg, (current & ~uint64(0xffffffff)) | uint64(value));
 }
 
 uint64 shFlags() {
@@ -294,12 +343,54 @@ void shSetArg(uint8 index, uint64 value) {
     setArg(index, value);
 }
 
+void shSetArg8(uint8 index, uint8 value) {
+    const uint64 current = arg(index);
+    setArg(index, (current & ~uint64(0xff)) | uint64(value));
+}
+
+void shSetArg16(uint8 index, uint16 value) {
+    const uint64 current = arg(index);
+    setArg(index, (current & ~uint64(0xffff)) | uint64(value));
+}
+
+void shSetArg32(uint8 index, uint32 value) {
+    const uint64 current = arg(index);
+    setArg(index, (current & ~uint64(0xffffffff)) | uint64(value));
+}
+
 uint64 shReturn() {
     return returnValue();
 }
 
+uint8 shReturn8() {
+    return uint8(shReturn());
+}
+
+uint16 shReturn16() {
+    return uint16(shReturn() & 0xffff);
+}
+
+uint32 shReturn32() {
+    return uint32(shReturn() & 0xffffffff);
+}
+
 void shSetReturn(uint64 value) {
     setReturnValue(value);
+}
+
+void shSetReturn8(uint8 value) {
+    const uint64 current = shReturn();
+    setReturnValue((current & ~uint64(0xff)) | uint64(value));
+}
+
+void shSetReturn16(uint16 value) {
+    const uint64 current = shReturn();
+    setReturnValue((current & ~uint64(0xffff)) | uint64(value));
+}
+
+void shSetReturn32(uint32 value) {
+    const uint64 current = shReturn();
+    setReturnValue((current & ~uint64(0xffffffff)) | uint64(value));
 }
 
 void shReturnEarly(uint64 value) {
@@ -321,6 +412,49 @@ uint64 shReadU64(uint64 address) {
 
 void shWriteU64(uint64 address, uint64 value) {
     writeU64(address, value);
+}
+
+uint8 shReadU8(uint64 address) {
+    array<uint8>@ bytes = shReadBytes(address, 1);
+    return bytes is null ? 0 : bytes[0];
+}
+
+uint16 shReadU16(uint64 address) {
+    array<uint8>@ bytes = shReadBytes(address, 2);
+    if (bytes is null || bytes.length() != 2) return 0;
+    return uint16(bytes[0]) | (uint16(bytes[1]) << 8);
+}
+
+uint32 shReadU32(uint64 address) {
+    array<uint8>@ bytes = shReadBytes(address, 4);
+    if (bytes is null || bytes.length() != 4) return 0;
+    return uint32(bytes[0]) | (uint32(bytes[1]) << 8) |
+           (uint32(bytes[2]) << 16) | (uint32(bytes[3]) << 24);
+}
+
+void shWriteU8(uint64 address, uint8 value) {
+    array<uint8> bytes(1);
+    bytes[0] = value;
+    uint written = 0;
+    shWriteBytes(address, bytes, written);
+}
+
+void shWriteU16(uint64 address, uint16 value) {
+    array<uint8> bytes(2);
+    bytes[0] = uint8(value);
+    bytes[1] = uint8(value >> 8);
+    uint written = 0;
+    shWriteBytes(address, bytes, written);
+}
+
+void shWriteU32(uint64 address, uint32 value) {
+    array<uint8> bytes(4);
+    bytes[0] = uint8(value);
+    bytes[1] = uint8(value >> 8);
+    bytes[2] = uint8(value >> 16);
+    bytes[3] = uint8(value >> 24);
+    uint written = 0;
+    shWriteBytes(address, bytes, written);
 }
 
 uint8 shMemProtect(uint64 address, uint64 size, uint8 protection) {
