@@ -34,7 +34,7 @@ jobs:
             build_dir: build-gcc-x64
             cmake_flags: -DCMAKE_C_FLAGS=-m64 -DCMAKE_CXX_FLAGS=-m64
           - name: MSVC x86
-            os: windows-latest
+            os: windows-2022
             platform: windows
             compiler: msvc
             bitness: x86
@@ -42,7 +42,7 @@ jobs:
             generator: Visual Studio 17 2022
             arch: Win32
           - name: MSVC x64
-            os: windows-latest
+            os: windows-2022
             platform: windows
             compiler: msvc
             bitness: x64
@@ -50,7 +50,7 @@ jobs:
             generator: Visual Studio 17 2022
             arch: x64
           - name: clang-cl x86
-            os: windows-latest
+            os: windows-2022
             platform: windows
             compiler: clang-cl
             bitness: x86
@@ -58,7 +58,7 @@ jobs:
             generator: Visual Studio 17 2022
             arch: Win32
           - name: clang-cl x64
-            os: windows-latest
+            os: windows-2022
             platform: windows
             compiler: clang-cl
             bitness: x64
