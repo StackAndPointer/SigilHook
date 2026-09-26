@@ -55,6 +55,8 @@ namespace SIGILHOOK {
 			uint64_t m_retVal;
 			uint8_t m_callOriginal;
 			uint8_t m_overrideReturn;
+			uint8_t m_redirect;
+			uint64_t m_redirectAddress;
 		};
 
 		struct ArgumentLocation {

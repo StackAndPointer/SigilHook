@@ -107,6 +107,9 @@ typedef struct sigilhook_call_frame {
     uint8_t* call_original;
     uint8_t* return_value_overridden;
     sigilhook_register_context* registers;
+    uint64_t instruction_pointer;
+    uint64_t* instruction_pointer_destination;
+    uint8_t* instruction_pointer_overridden;
 } sigilhook_call_frame;
 
 typedef void (SIGILHOOK_CALL *sigilhook_jit_callback)(
@@ -120,6 +123,10 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_flags(
     const sigilhook_call_frame* frame, uint64_t* out_flags);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_flags(
     sigilhook_call_frame* frame, uint64_t flags);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_instruction_pointer(
+    const sigilhook_call_frame* frame, uint64_t* out_address);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_instruction_pointer(
+    sigilhook_call_frame* frame, uint64_t address);
 
 typedef enum sigilhook_log_level {
     SIGILHOOK_LOG_INFO = 0,
@@ -195,6 +202,22 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_mem_protect(
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_find_pattern(
     uint64_t address, size_t size, const char* ida_pattern, uint64_t* out_address);
 SIGILHOOK_API uint64_t SIGILHOOK_CALL sigilhook_pattern_size(const char* ida_pattern);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_disassemble(
+    uint64_t address, uint32_t max_bytes, char* output, size_t output_capacity,
+    size_t* out_decoded_bytes);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_parse_hex(
+    const char* text, uint64_t* out_value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_compute_cmp_flags(
+    uint64_t left, uint64_t right, uint8_t operand_size, uint64_t* out_flags);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_compute_test_flags(
+    uint64_t left, uint64_t right, uint8_t operand_size, uint64_t* out_flags);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_fxsave(void* buffer, size_t size);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_fxrstor(const void* buffer, size_t size);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_return_snippet(
+    uint64_t stack_adjust, uint64_t* out_address);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_destroy_snippet(uint64_t address);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_stack_jump_snippet(
+    uint64_t stack_pointer, uint64_t target, uint64_t* out_address);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
     uint64_t target, const char* return_type, const char* comma_separated_parameters,
     const char* call_convention, const uint64_t* arguments, size_t argument_count,

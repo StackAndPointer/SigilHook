@@ -674,6 +674,8 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	cc.mov(asmjit::x86::dword_ptr(retStruct, offsetof(ReturnValue, m_retVal) + sizeof(uint32_t)), 0);
 	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 1);
 	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_overrideReturn)), 0);
+	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_redirect)), 0);
+	cc.mov(asmjit::x86::qword_ptr(retStruct, offsetof(ReturnValue, m_redirectAddress)), 0);
 
 	asmjit::InvokeNode* invokeNode = nullptr;
 	cc.invoke(
@@ -803,6 +805,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	const asmjit::x86::Gp scratch = is64 ? asmjit::x86::r10 : asmjit::x86::edx;
 	const asmjit::x86::Gp scratch2 = is64 ? asmjit::x86::r11 : asmjit::x86::eax;
 	const asmjit::x86::Gp stateBase = is64 ? asmjit::x86::r11 : asmjit::x86::ebp;
+	const asmjit::x86::Gp stateCopy = is64 ? asmjit::x86::r12 : asmjit::x86::edx;
 
 	a.sub(sp, allocationSize);
 	for (uint32_t reg = 0; reg < registerCount; ++reg) {
@@ -823,6 +826,8 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	a.mov(asmjit::x86::dword_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_retVal) + sizeof(uint32_t)), 0);
 	a.mov(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_callOriginal)), 1);
 	a.mov(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_overrideReturn)), 0);
+	a.mov(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_redirect)), 0);
+	a.mov(asmjit::x86::qword_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_redirectAddress)), 0);
 
 	for (size_t index = 0; index < m_callLayout.arguments.size(); ++index) {
 		const auto& location = m_callLayout.arguments[index];
@@ -863,9 +868,12 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	}
 
 	asmjit::Label callOriginal = a.newLabel();
+	asmjit::Label redirectInstructionPointer = a.newLabel();
 	asmjit::Label finishEarly = a.newLabel();
 	asmjit::Label finishOriginal = a.newLabel();
 	asmjit::Label sharedReturn = a.newLabel();
+	a.cmp(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_redirect)), 0);
+	a.jne(redirectInstructionPointer);
 	a.cmp(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_callOriginal)), 0);
 	a.jne(callOriginal);
 	a.jmp(finishEarly);
@@ -896,6 +904,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	}
 
 	const uint32_t stateBaseRegister = is64 ? SIGILHOOK_REGISTER_R11 : SIGILHOOK_REGISTER_BP;
+	const uint32_t stateCopyRegister = is64 ? SIGILHOOK_REGISTER_R12 : SIGILHOOK_REGISTER_DX;
 	for (uint32_t reg = 0; reg < registerCount; ++reg) {
 		if (reg == SIGILHOOK_REGISTER_SP || reg == stateBaseRegister) continue;
 		a.mov(gpRegister(arch, reg), asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * reg));
@@ -946,6 +955,24 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		a.mov(gpRegister(arch, reg), asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * reg));
 	}
 	a.mov(stateBase, asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateBaseRegister));
+	a.jmp(sharedReturn);
+
+	a.bind(redirectInstructionPointer);
+	a.lea(stateBase, asmjit::x86::ptr(sp, stateOffset));
+	const uint32_t redirectAddressReg = is64 ? SIGILHOOK_REGISTER_R10 : SIGILHOOK_REGISTER_AX;
+	a.mov(gpRegister(arch, redirectAddressReg), asmjit::x86::ptr(stateBase, retOffset + offsetof(ReturnValue, m_redirectAddress)));
+	for (uint32_t reg = 0; reg < registerCount; ++reg) {
+		if (reg == SIGILHOOK_REGISTER_SP || reg == stateBaseRegister || reg == redirectAddressReg) continue;
+		a.mov(gpRegister(arch, reg), asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * reg));
+	}
+	a.mov(stateCopy, stateBase);
+	a.mov(stateBase, asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateBaseRegister));
+	if (is64) a.push(asmjit::x86::qword_ptr(sp, stateOffset + offsetof(Parameters, m_flags)));
+	else a.push(asmjit::x86::dword_ptr(sp, stateOffset + offsetof(Parameters, m_flags)));
+	if (is64) a.popfq(); else a.popfd();
+	a.mov(sp, asmjit::x86::ptr(stateCopy, offsetof(Parameters, m_entryStack)));
+	a.mov(stateCopy, asmjit::x86::ptr(stateCopy, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateCopyRegister));
+	a.jmp(gpRegister(arch, redirectAddressReg));
 	a.bind(sharedReturn);
 	if (is64) {
 		a.push(asmjit::x86::qword_ptr(sp, stateOffset + offsetof(Parameters, m_flags)));
@@ -995,7 +1022,9 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	bool canUseRegisterStub = (retType == "void" || getTypeWidth(retType) <= pointerSize);
 	for (const std::string& paramType : paramTypes) {
 		const asmjit::TypeId typeId = getTypeId(paramType);
-		canUseRegisterStub = canUseRegisterStub && isGeneralReg(typeId) && asmjit::TypeUtils::sizeOf(typeId) <= pointerSize;
+		// Route all GPR-only signatures through the explicit-layout stub so stack
+		// arguments, register writeback, flags, and IP redirection stay consistent.
+		canUseRegisterStub = canUseRegisterStub && isGeneralReg(typeId);
 	}
 
 	if (canUseRegisterStub) {

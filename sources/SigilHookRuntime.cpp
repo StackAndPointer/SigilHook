@@ -218,6 +218,101 @@ bool scriptSetFlags(asQWORD flags) {
     return sigilhook_call_frame_set_flags(g_currentFrame, static_cast<uint64_t>(flags)) == SIGILHOOK_OK;
 }
 
+asQWORD scriptGetInstructionPointer() {
+    uint64_t address = 0;
+    sigilhook_call_frame_get_instruction_pointer(g_currentFrame, &address);
+    return address;
+}
+
+bool scriptSetInstructionPointer(asQWORD address) {
+    return sigilhook_call_frame_set_instruction_pointer(
+               g_currentFrame, static_cast<uint64_t>(address)) == SIGILHOOK_OK;
+}
+
+std::string scriptDisassemble(asQWORD address, asUINT maxBytes) {
+    char buffer[8192]{};
+    size_t decoded = 0;
+    if (sigilhook_disassemble(static_cast<uint64_t>(address), maxBytes, buffer, sizeof(buffer), &decoded) != SIGILHOOK_OK) {
+        return {};
+    }
+    return buffer;
+}
+
+asBYTE scriptDisassembleStatus(asQWORD address, asUINT maxBytes, std::string& output, asUINT& decoded) {
+    char buffer[8192]{};
+    size_t count = 0;
+    const sigilhook_status status = sigilhook_disassemble(
+        static_cast<uint64_t>(address), maxBytes, buffer, sizeof(buffer), &count);
+    output = status == SIGILHOOK_OK ? buffer : std::string();
+    decoded = static_cast<asUINT>(count);
+    return static_cast<asBYTE>(status);
+}
+
+asQWORD scriptHexToU64(const std::string& text) {
+    uint64_t value = 0;
+    return sigilhook_parse_hex(text.c_str(), &value) == SIGILHOOK_OK ? value : 0;
+}
+
+asBYTE scriptParseHexStatus(const std::string& text, asQWORD& value) {
+    uint64_t parsed = 0;
+    const sigilhook_status status = sigilhook_parse_hex(text.c_str(), &parsed);
+    value = parsed;
+    return static_cast<asBYTE>(status);
+}
+
+asQWORD scriptAsmCmp(asQWORD left, asQWORD right, asBYTE operandSize) {
+    uint64_t flags = 0;
+    sigilhook_compute_cmp_flags(left, right, static_cast<uint8_t>(operandSize), &flags);
+    return flags;
+}
+
+asQWORD scriptAsmTest(asQWORD left, asQWORD right, asBYTE operandSize) {
+    uint64_t flags = 0;
+    sigilhook_compute_test_flags(left, right, static_cast<uint8_t>(operandSize), &flags);
+    return flags;
+}
+
+asBYTE scriptAsmFxsave(CScriptArray& state) {
+    if (state.GetSize() != 512) return SIGILHOOK_ERROR_INVALID_ARGUMENT;
+    return static_cast<asBYTE>(sigilhook_fxsave(state.GetBuffer(), state.GetSize()));
+}
+
+asBYTE scriptAsmFxrstor(const CScriptArray& state) {
+    if (state.GetSize() != 512) return SIGILHOOK_ERROR_INVALID_ARGUMENT;
+    return static_cast<asBYTE>(sigilhook_fxrstor(
+        const_cast<CScriptArray&>(state).GetBuffer(), state.GetSize()));
+}
+
+asBYTE scriptAsmRetStatus(asUINT stackAdjust, asQWORD& address) {
+    uint64_t result = 0;
+    const sigilhook_status status = sigilhook_create_return_snippet(stackAdjust, &result);
+    address = result;
+    return static_cast<asBYTE>(status);
+}
+
+asQWORD scriptAsmRet(asUINT stackAdjust) {
+    asQWORD address = 0;
+    scriptAsmRetStatus(stackAdjust, address);
+    return address;
+}
+
+asBYTE scriptAsmMovStackJumpStatus(asQWORD stackPointer, asQWORD target, asQWORD& address) {
+    uint64_t result = 0;
+    const sigilhook_status status = sigilhook_create_stack_jump_snippet(stackPointer, target, &result);
+    address = result;
+    return static_cast<asBYTE>(status);
+}
+
+asQWORD scriptAsmMovStackJump(asQWORD stackPointer, asQWORD target) {
+    asQWORD address = 0;
+    scriptAsmMovStackJumpStatus(stackPointer, target, address);
+    return address;
+}
+
+asBYTE scriptDestroySnippetStatus(asQWORD address) {
+    return static_cast<asBYTE>(sigilhook_destroy_snippet(static_cast<uint64_t>(address)));
+}
+
 void scriptCallOriginal() {
     if (g_currentFrame != nullptr && g_currentFrame->call_original != nullptr) {
         *g_currentFrame->call_original = 1;
@@ -688,6 +783,21 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("bool setRegister(uint8, uint64)", asFUNCTION(scriptSetRegister), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getFlags()", asFUNCTION(scriptGetFlags), asCALL_CDECL);
     engine->RegisterGlobalFunction("bool setFlags(uint64)", asFUNCTION(scriptSetFlags), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 getInstructionPointer()", asFUNCTION(scriptGetInstructionPointer), asCALL_CDECL);
+    engine->RegisterGlobalFunction("bool setInstructionPointer(uint64)", asFUNCTION(scriptSetInstructionPointer), asCALL_CDECL);
+    engine->RegisterGlobalFunction("string disassemble(uint64, uint)", asFUNCTION(scriptDisassemble), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 disassembleStatus(uint64, uint, string &out, uint &out)", asFUNCTION(scriptDisassembleStatus), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 hexToU64(const string &in)", asFUNCTION(scriptHexToU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 parseHexStatus(const string &in, uint64 &out)", asFUNCTION(scriptParseHexStatus), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 asmCmp(uint64, uint64, uint8)", asFUNCTION(scriptAsmCmp), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 asmTest(uint64, uint64, uint8)", asFUNCTION(scriptAsmTest), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 asmFxsave(array<uint8> &inout)", asFUNCTION(scriptAsmFxsave), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 asmFxrstor(const array<uint8> &in)", asFUNCTION(scriptAsmFxrstor), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 asmRetStatus(uint, uint64 &out)", asFUNCTION(scriptAsmRetStatus), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 asmRet(uint)", asFUNCTION(scriptAsmRet), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 asmMovStackJumpStatus(uint64, uint64, uint64 &out)", asFUNCTION(scriptAsmMovStackJumpStatus), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 asmMovStackJump(uint64, uint64)", asFUNCTION(scriptAsmMovStackJump), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 destroySnippetStatus(uint64)", asFUNCTION(scriptDestroySnippetStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 returnValue()", asFUNCTION(scriptGetReturnU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setReturnValue(uint64)", asFUNCTION(scriptSetReturnU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void callOriginal()", asFUNCTION(scriptCallOriginal), asCALL_CDECL);

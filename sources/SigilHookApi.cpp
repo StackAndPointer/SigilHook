@@ -4,6 +4,7 @@
 
 #include "sigilhook/ErrorLog.hpp"
 #include "sigilhook/Detour/ILCallback.hpp"
+#include "sigilhook/ZydisDisassembler.hpp"
 #include "sigilhook/Detour/x64Detour.hpp"
 #include "sigilhook/Detour/x86Detour.hpp"
 #include "sigilhook/Exceptions/BreakPointHook.hpp"
@@ -15,10 +16,17 @@
 #include "sigilhook/Virtuals/VFuncSwapHook.hpp"
 #include "sigilhook/Virtuals/VTableSwapHook.hpp"
 
+#pragma warning(push, 0)
+#include <asmjit/x86.h>
+#pragma warning(pop)
+
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstring>
+#include <functional>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -26,10 +34,12 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  include <intrin.h>
 #endif
 
 namespace {
@@ -126,6 +136,7 @@ struct JitRecord {
     size_t slot = 32;
     void* userData = nullptr;
     uint64_t codeAddress = 0;
+    uint64_t target = 0;
     std::vector<uint8_t> argumentWidths;
     std::atomic<uint64_t> boundHook{0};
 };
@@ -134,6 +145,7 @@ struct HookRecord {
     std::unique_ptr<SIGILHOOK::IHook> hook;
     std::shared_ptr<JitRecord> jit;
     uint64_t trampoline = 0;
+    uint64_t target = 0;
     SIGILHOOK::VFuncMap originalVFuncs;
     sigilhook_hook_type type = SIGILHOOK_HOOK_UNKNOWN;
 };
@@ -175,6 +187,13 @@ void writeArgument(
     }
 }
 
+void writeStackArgument(
+    const SIGILHOOK::ILCallback::Parameters* parameters, int32_t stackOffset, uint8_t width, uint64_t value) {
+    if (parameters->m_entryStack == 0 || width == 0 || width > sizeof(value)) return;
+    auto* destination = reinterpret_cast<uint8_t*>(parameters->m_entryStack) + stackOffset;
+    std::memcpy(destination, &value, width);
+}
+
 void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* parameters, uint8_t count, const SIGILHOOK::ILCallback::ReturnValue* returnValue) {
     auto* result = const_cast<SIGILHOOK::ILCallback::ReturnValue*>(returnValue);
     result->m_retVal = 0;
@@ -206,8 +225,13 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
 
     sigilhook_call_frame frame{
         arguments.data(), count, &result->m_retVal, &result->m_callOriginal, &result->m_overrideReturn, registers
+        , record->target, &result->m_redirectAddress, &result->m_redirect
     };
     record->userCallback(&frame, record->userData);
+    if (result->m_redirect != 0 && result->m_redirectAddress == 0) {
+        result->m_redirect = 0;
+    }
+    if (result->m_redirect != 0) result->m_callOriginal = 0;
 
     for (uint8_t index = 0; index < count; ++index) {
         const uint8_t width = index < record->argumentWidths.size() ? record->argumentWidths[index] : sizeof(uint64_t);
@@ -221,6 +245,8 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
             } else {
                 registers->registers[reg] = arguments[index] & mask;
             }
+        } else if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Stack) {
+            writeStackArgument(parameters, layout.arguments[index].stackOffset, width, arguments[index]);
         }
         writeArgument(parameters, index, width, arguments[index]);
     }
@@ -275,6 +301,29 @@ sigilhook_status validateHook(sigilhook_handle handle, std::shared_ptr<HookRecor
     return SIGILHOOK_OK;
 }
 
+asmjit::JitRuntime g_snippetRuntime;
+std::mutex g_snippetMutex;
+std::unordered_set<uint64_t> g_snippetAddresses;
+
+sigilhook_status makeSnippet(
+    const std::function<void(asmjit::x86::Assembler&)>& emit, uint64_t* outAddress) {
+    if (outAddress == nullptr) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Snippet output address is required");
+    *outAddress = 0;
+    asmjit::CodeHolder code;
+    if (code.init(g_snippetRuntime.environment()) != asmjit::kErrorOk) {
+        return fail(SIGILHOOK_ERROR_EXCEPTION, "Failed to initialize snippet code");
+    }
+    asmjit::x86::Assembler assembler(&code);
+    emit(assembler);
+    void* address = nullptr;
+    std::lock_guard lock(g_snippetMutex);
+    if (g_snippetRuntime.add(&address, &code) != asmjit::kErrorOk || address == nullptr) {
+        return fail(SIGILHOOK_ERROR_MEMORY, "Failed to allocate executable snippet memory");
+    }
+    g_snippetAddresses.insert(reinterpret_cast<uint64_t>(address));
+    *outAddress = reinterpret_cast<uint64_t>(address);
+    return SIGILHOOK_OK;
+}
 sigilhook_status validateDetour(sigilhook_handle handle, std::shared_ptr<HookRecord>* outRecord) {
     const sigilhook_status status = validateHook(handle, outRecord);
     if (status != SIGILHOOK_OK) {
@@ -339,7 +388,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020004;
+    return 0x00020005;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -398,6 +447,32 @@ sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_flags(
     return SIGILHOOK_OK;
 }
 
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_instruction_pointer(
+    const sigilhook_call_frame* frame, uint64_t* outAddress) {
+    if (frame == nullptr || outAddress == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame and output address are required");
+    }
+    *outAddress = frame->instruction_pointer;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_instruction_pointer(
+    sigilhook_call_frame* frame, uint64_t address) {
+    if (frame == nullptr || frame->instruction_pointer_overridden == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame and redirect output are required");
+    }
+    if (address == 0) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Redirect address cannot be zero");
+    if (currentMode() != SIGILHOOK::Mode::x64 && address > UINT32_MAX) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "Redirect address does not fit in x86");
+    }
+    frame->instruction_pointer = address;
+    if (frame->instruction_pointer_destination != nullptr) {
+        *frame->instruction_pointer_destination = address;
+    }
+    *frame->instruction_pointer_overridden = 1;
+    return SIGILHOOK_OK;
+}
+
 const char* SIGILHOOK_CALL sigilhook_status_string(sigilhook_status status) {
     switch (status) {
     case SIGILHOOK_OK: return "ok";
@@ -444,6 +519,7 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
     if (outTrampoline != nullptr) *outTrampoline = 0;
     const sigilhook_status status = createHook([&](HookRecord& record) {
         record.trampoline = 0;
+        record.target = target;
 #if defined(SIGILHOOK_ARCH_X64)
         record.hook = std::make_unique<SIGILHOOK::x64Detour>(target, callback, &record.trampoline);
 #else
@@ -813,6 +889,7 @@ sigilhook_status SIGILHOOK_CALL sigilhook_bind_detour_to_jit(
         return fail(SIGILHOOK_ERROR_BUSY, "The JIT callback is already bound to another hook");
     }
     record->jit = std::move(owner);
+    record->jit->target = record->target;
     if (record->jit->callback != nullptr) {
         *record->jit->callback->getTrampolineHolder() = record->trampoline;
     }
@@ -867,6 +944,194 @@ sigilhook_status SIGILHOOK_CALL sigilhook_find_pattern(
 
 uint64_t SIGILHOOK_CALL sigilhook_pattern_size(const char* idaPattern) {
     return idaPattern == nullptr ? 0 : SIGILHOOK::getPatternSize(idaPattern);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_disassemble(
+    uint64_t address, uint32_t maxBytes, char* output, size_t outputCapacity,
+    size_t* outDecodedBytes) {
+    if (address == 0 || output == nullptr || outputCapacity == 0 || maxBytes == 0 || maxBytes > 4096) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Address, output, and 1-4096 max bytes are required");
+    }
+    output[0] = '\0';
+    if (outDecodedBytes != nullptr) *outDecodedBytes = 0;
+    std::vector<uint8_t> bytes(maxBytes);
+    size_t read = 0;
+    SIGILHOOK::MemAccessor accessor;
+    if (!accessor.safe_mem_read(address, reinterpret_cast<uint64_t>(bytes.data()), bytes.size(), read) || read == 0) {
+        return fail(SIGILHOOK_ERROR_MEMORY, "Could not read bytes for disassembly");
+    }
+
+    ZydisDecoder decoder;
+    ZydisFormatter formatter;
+    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
+    if (ZYAN_FAILED(ZydisDecoderInit(&decoder,
+            currentMode() == SIGILHOOK::Mode::x64 ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LONG_COMPAT_32,
+            currentMode() == SIGILHOOK::Mode::x64 ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32)) ||
+        ZYAN_FAILED(ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL))) {
+        return fail(SIGILHOOK_ERROR_EXCEPTION, "Failed to initialize the Zydis disassembler");
+    }
+
+    std::ostringstream text;
+    size_t offset = 0;
+    while (offset < read && offset < maxBytes) {
+        ZydisDecodedInstruction instruction;
+        if (ZYAN_FAILED(ZydisDecoderDecodeFull(&decoder, bytes.data() + offset, read - offset, &instruction, operands))) break;
+        if (offset + instruction.length > maxBytes || offset + instruction.length > read) break;
+        char formatted[512]{};
+        if (ZYAN_FAILED(ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count,
+                formatted, sizeof(formatted), address + offset, ZYAN_NULL))) break;
+        text << std::hex << std::setfill('0') << std::setw(16) << (address + offset) << "  ";
+        for (size_t index = 0; index < instruction.length; ++index) {
+            text << std::setw(2) << static_cast<unsigned>(bytes[offset + index]) << ' ';
+        }
+        text << std::dec << std::setfill(' ') << " " << formatted << '\n';
+        offset += instruction.length;
+    }
+    if (offset == 0) return fail(SIGILHOOK_ERROR_NOT_FOUND, "No instruction could be decoded at the requested address");
+    const std::string result = text.str();
+    if (result.size() + 1 > outputCapacity) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Disassembly output buffer is too small");
+    }
+    std::memcpy(output, result.c_str(), result.size() + 1);
+    if (outDecodedBytes != nullptr) *outDecodedBytes = offset;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_parse_hex(const char* text, uint64_t* outValue) {
+    if (text == nullptr || outValue == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Hex text and output value are required");
+    }
+    while (*text == ' ' || *text == '\t') ++text;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) text += 2;
+    if (*text == '\0') return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Hex text is empty");
+    const auto result = std::from_chars(text, text + std::strlen(text), *outValue, 16);
+    if (result.ec != std::errc() || result.ptr != text + std::strlen(text)) {
+        *outValue = 0;
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Hex text is invalid");
+    }
+    return SIGILHOOK_OK;
+}
+
+namespace {
+uint64_t currentEflags() {
+#if defined(_MSC_VER)
+    return static_cast<uint64_t>(__readeflags());
+#elif defined(__GNUC__) && defined(__x86_64__)
+    return __builtin_ia32_readeflags_u64();
+#elif defined(__GNUC__)
+    return __builtin_ia32_readeflags_u32();
+#else
+    return 0;
+#endif
+}
+
+sigilhook_status computeFlags(
+    uint64_t left, uint64_t right, uint8_t operandSize, bool test, uint64_t* outFlags) {
+    if (outFlags == nullptr || (operandSize != 1 && operandSize != 2 && operandSize != 4 && operandSize != 8)) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Flags output and operand size 1, 2, 4, or 8 are required");
+    }
+    const uint32_t bits = operandSize * 8;
+    const uint64_t mask = bits == 64 ? ~uint64_t{0} : (uint64_t{1} << bits) - 1;
+    left &= mask;
+    right &= mask;
+    const uint64_t result = test ? (left & right) : ((left - right) & mask);
+    const uint64_t sign = uint64_t{1} << (bits - 1);
+    uint64_t computed = 0;
+    if ((result & 0xff) == 0) computed |= 0x40;
+    if ((result & sign) != 0) computed |= 0x80;
+    uint8_t parityByte = static_cast<uint8_t>(result & 0xff);
+    parityByte ^= static_cast<uint8_t>(parityByte >> 4);
+    parityByte ^= static_cast<uint8_t>(parityByte >> 2);
+    parityByte ^= static_cast<uint8_t>(parityByte >> 1);
+    if ((parityByte & 1) == 0) computed |= 0x04;
+    if (test) {
+        constexpr uint64_t modifiedMask = 0x8c5; // CF, PF, ZF, SF, OF
+        *outFlags = (currentEflags() & ~modifiedMask) | (computed & modifiedMask);
+    } else {
+        if (left < right) computed |= 0x01;
+        if (((~(left ^ right) & (left ^ result)) & sign) != 0) computed |= 0x800;
+        if (((left ^ right ^ result) & 0x10) != 0) computed |= 0x10;
+        constexpr uint64_t modifiedMask = 0x8d5; // CF, PF, AF, ZF, SF, OF
+        *outFlags = (currentEflags() & ~modifiedMask) | (computed & modifiedMask);
+    }
+    return SIGILHOOK_OK;
+}
+} // namespace
+
+sigilhook_status SIGILHOOK_CALL sigilhook_compute_cmp_flags(
+    uint64_t left, uint64_t right, uint8_t operandSize, uint64_t* outFlags) {
+    return computeFlags(left, right, operandSize, false, outFlags);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_compute_test_flags(
+    uint64_t left, uint64_t right, uint8_t operandSize, uint64_t* outFlags) {
+    return computeFlags(left, right, operandSize, true, outFlags);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_fxsave(void* buffer, size_t size) {
+    if (buffer == nullptr || size != 512) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "FXSAVE requires a 512-byte buffer");
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+    alignas(16) uint8_t state[512]{};
+    _fxsave(state);
+    std::memcpy(buffer, state, sizeof(state));
+    return SIGILHOOK_OK;
+#else
+    return fail(SIGILHOOK_ERROR_UNSUPPORTED, "FXSAVE is only implemented for MSVC x86/x64 builds");
+#endif
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_fxrstor(const void* buffer, size_t size) {
+    if (buffer == nullptr || size != 512) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "FXRSTOR requires a 512-byte buffer");
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+    alignas(16) uint8_t state[512]{};
+    std::memcpy(state, buffer, sizeof(state));
+    _fxrstor(state);
+    return SIGILHOOK_OK;
+#else
+    return fail(SIGILHOOK_ERROR_UNSUPPORTED, "FXRSTOR is only implemented for MSVC x86/x64 builds");
+#endif
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_create_return_snippet(
+    uint64_t stackAdjust, uint64_t* outAddress) {
+    if (stackAdjust > UINT16_MAX) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Return stack adjustment exceeds 65535 bytes");
+    return makeSnippet([stackAdjust](asmjit::x86::Assembler& assembler) {
+        if (stackAdjust == 0) assembler.ret();
+        else assembler.ret(static_cast<uint16_t>(stackAdjust));
+    }, outAddress);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_create_stack_jump_snippet(
+    uint64_t stackPointer, uint64_t target, uint64_t* outAddress) {
+    if (stackPointer == 0 || target == 0) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Stack pointer and jump target are required");
+    }
+    if (currentMode() != SIGILHOOK::Mode::x64 && (stackPointer > UINT32_MAX || target > UINT32_MAX)) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "Stack jump values do not fit in x86");
+    }
+    return makeSnippet([stackPointer, target](asmjit::x86::Assembler& assembler) {
+        if (currentMode() == SIGILHOOK::Mode::x64) {
+            assembler.mov(asmjit::x86::rsp, stackPointer);
+            assembler.jmp(asmjit::Imm(target));
+        } else {
+            assembler.mov(asmjit::x86::esp, static_cast<uint32_t>(stackPointer));
+            assembler.jmp(asmjit::Imm(static_cast<uint32_t>(target)));
+        }
+    }, outAddress);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_destroy_snippet(uint64_t address) {
+    if (address == 0 || address > UINTPTR_MAX) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Snippet address is invalid");
+    }
+    std::lock_guard lock(g_snippetMutex);
+    if (g_snippetAddresses.erase(address) == 0) {
+        return fail(SIGILHOOK_ERROR_NOT_FOUND, "Snippet address was not allocated by SigilHook");
+    }
+    if (g_snippetRuntime.release(reinterpret_cast<void*>(static_cast<uintptr_t>(address))) != asmjit::kErrorOk) {
+        return fail(SIGILHOOK_ERROR_NOT_FOUND, "Snippet address was not allocated by SigilHook");
+    }
+    return SIGILHOOK_OK;
 }
 
 sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(

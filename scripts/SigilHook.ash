@@ -213,6 +213,70 @@ bool shSetFlags(uint64 flags) {
     return setFlags(flags);
 }
 
+uint64 shInstructionPointer() {
+    return getInstructionPointer();
+}
+
+bool shSetInstructionPointer(uint64 address) {
+    return setInstructionPointer(address);
+}
+
+string shDisAsm(uint64 address, uint maxBytes = 30) {
+    return disassemble(address, maxBytes);
+}
+
+uint8 shDisAsmStatus(uint64 address, uint maxBytes, string &out text, uint &out decodedBytes) {
+    return disassembleStatus(address, maxBytes, text, decodedBytes);
+}
+
+uint64 shHtoi(const string &in text) {
+    return hexToU64(text);
+}
+
+uint8 shParseHexStatus(const string &in text, uint64 &out value) {
+    return parseHexStatus(text, value);
+}
+
+uint64 shAsmCmp(uint64 left, uint64 right, uint8 operandSize = 4) {
+    return asmCmp(left, right, operandSize);
+}
+
+uint64 shAsmTest(uint64 left, uint64 right, uint8 operandSize = 4) {
+    return asmTest(left, right, operandSize);
+}
+
+uint8 shAsmFxsave(array<uint8> &inout state) {
+    return asmFxsave(state);
+}
+
+uint8 shAsmFxrstor(const array<uint8> &in state) {
+    return asmFxrstor(state);
+}
+
+uint8 shAsmRetStatus(uint stackAdjust, uint64 &out address) {
+    return asmRetStatus(stackAdjust, address);
+}
+
+uint64 shAsmRet(uint stackAdjust = 0) {
+    return asmRet(stackAdjust);
+}
+
+uint8 shAsmRetFree(uint64 address) {
+    return destroySnippetStatus(address);
+}
+
+uint8 shAsmMovEspAndJmpStatus(uint64 stackPointer, uint64 target, uint64 &out address) {
+    return asmMovStackJumpStatus(stackPointer, target, address);
+}
+
+uint64 shAsmMovEspAndJmp(uint64 stackPointer, uint64 target) {
+    return asmMovStackJump(stackPointer, target);
+}
+
+uint8 shAsmMovEspAndJmpFree(uint64 address) {
+    return destroySnippetStatus(address);
+}
+
 uint8 shArg8(uint8 index) {
     return arg8(index);
 }
