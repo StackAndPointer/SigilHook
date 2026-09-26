@@ -86,6 +86,25 @@ required. `sigilhook_runtime_start` and `sigilhook_runtime_stop` remain C ABI-on
 because stopping the runtime from inside one of its own scripts would tear down
 the active AngelScript context.
 
+The complete interface is grouped as follows:
+
+| Group | Functions |
+| --- | --- |
+| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
+| Hook creation | `shHookScript`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
+| Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
+| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
+| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
+| Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
+| Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall` |
+
+Exact argument types and `out` parameters are defined in
+[`scripts/SigilHook.ash`](scripts/SigilHook.ash). Native callers should use
+the corresponding declarations in [`include/sigilhook.h`](include/sigilhook.h).
+
 ## Calling conventions and registers
 
 `shHookScript` keeps the original three-argument behavior. Use
@@ -204,6 +223,10 @@ the boundary.
 
 ## Building
 
+The repository workflow validates GCC x86/x64 on Linux and MSVC plus clang-cl
+on Windows for both x86 and x64. Windows builds are the injectable release
+artifacts.
+
 Build x64 from a Visual Studio developer prompt:
 
 ```powershell
@@ -233,6 +256,40 @@ _build-x86/SigilHookImport.lib
 
 `SigilHook.lib` is the static C++ library. `SigilHookImport.lib` is the import
 library for the exported C ABI in `SigilHook.dll`.
+
+For clang-cl, use the Visual Studio generator with `-T ClangCL` and use
+`-A Win32` for x86:
+
+```powershell
+cmake -S . -B _build-clang-cl-x64 -G "Visual Studio 17 2022" -T ClangCL -A x64 `
+  -DSIGILHOOK_BUILD_DLL=ON -DSIGILHOOK_BUILD_INJECTOR_DLL=ON
+cmake --build _build-clang-cl-x64 --config Release --target SigilHookDll
+ctest --test-dir _build-clang-cl-x64 -C Release --output-on-failure
+```
+
+Omit `-T ClangCL` to use the regular MSVC toolset with the same generator and
+architecture flags.
+
+The manual GitHub Actions workflow accepts an optional `release_tag`. When it
+is set, it publishes four Windows packages:
+
+```text
+SigilHook-msvc-x86.zip
+SigilHook-msvc-x64.zip
+SigilHook-clang-cl-x86.zip
+SigilHook-clang-cl-x64.zip
+```
+
+Each package contains the deployable runtime layout:
+
+```text
+SigilHook.dll
+SigilHook/
+  SigilHook.ash
+```
+
+The GCC jobs provide Linux build and test coverage; they do not produce
+Windows DLL release packages.
 
 ## License and acknowledgements
 

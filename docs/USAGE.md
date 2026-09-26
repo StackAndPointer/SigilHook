@@ -68,6 +68,29 @@ _build-x64/SigilHookImport.lib
 
 `SigilHook.lib` is the static C++ library. `SigilHookImport.lib` is the import library for the exported C ABI. The CMake build copies the standard header into `SigilHook/SigilHook.ash` in the selected build directory.
 
+The repository workflow also builds MSVC and clang-cl with Visual Studio for
+both `Win32` and `x64`. The manual workflow accepts an optional `release_tag`.
+When supplied, it publishes these four Windows packages:
+
+```text
+SigilHook-msvc-x86.zip
+SigilHook-msvc-x64.zip
+SigilHook-clang-cl-x86.zip
+SigilHook-clang-cl-x64.zip
+```
+
+Every package contains the deployable layout below. The `.ash` file is shipped
+beside the DLL so a new deployment has the standard declarations immediately:
+
+```text
+SigilHook.dll
+SigilHook/
+  SigilHook.ash
+```
+
+The GCC x86/x64 jobs are Linux source-build and test checks. They are not
+Windows DLL release packages.
+
 ## 3. Deployment and loading
 
 The default script directory is:
@@ -187,6 +210,28 @@ SH_ERROR_EXCEPTION
 ```
 
 Convenience functions such as `shHookScript()` and `shDestroyHook()` discard the underlying status where the legacy helper did so. Use `sh...Status` or the explicit status-returning forms when failure handling matters.
+
+### Complete script interface index
+
+The standard header is the public script API. Its functions are grouped below:
+
+| Group | Functions |
+| --- | --- |
+| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
+| Hook creation | `shHookScript`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
+| Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
+| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
+| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
+| Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
+| Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall` |
+
+The exact declarations, parameter widths, return values, and `out` parameters
+are defined by [`scripts/SigilHook.ash`](../scripts/SigilHook.ash). Native
+integrations use the corresponding C ABI declarations in
+[`include/sigilhook.h`](../include/sigilhook.h).
 
 ### Hook construction
 
