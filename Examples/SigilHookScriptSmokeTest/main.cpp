@@ -278,8 +278,17 @@ int main() {
 
     uint64_t scriptBad = 0;
     CHECK(sigilhook_runtime_get_shared_u64("scriptBad", &scriptBad) == SIGILHOOK_OK);
-    if (scriptBad != 0) std::cerr << "helper failure step: " << scriptBad << std::endl;
+    if (scriptBad != 0) {
+        std::cerr << "helper failure step: " << scriptBad << std::endl;
+        uint64_t invokeStatus = 0;
+        uint64_t invokeResult = 0;
+        sigilhook_runtime_get_shared_u64("invokeStatus", &invokeStatus);
+        sigilhook_runtime_get_shared_u64("invokeResult", &invokeResult);
+        std::cerr << "invoke status: " << invokeStatus << ", result: " << invokeResult << std::endl;
+    }
     CHECK(scriptBad == 0);
+    CHECK(g_usercallTargetCalls == 1);
+    g_usercallTargetCalls = 0;
 
     CHECK(target(1) == 77);
     CHECK(g_targetCalls == 0);

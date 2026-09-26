@@ -31,7 +31,7 @@ void verifyHelperApi() {
     if (shSharedU64("helperLoopback") != 0x123456789abcdef0) { failHelperTest(); return; }
 
     g_helperStep = 201;
-    if (shApiVersion() < 0x00020003 ||
+    if (shApiVersion() < 0x00020004 ||
         shBuildMode() != uint8(shSharedU64("expectedBuildMode"))) { failHelperTest(); return; }
 
     g_helperStep = 202;
@@ -161,6 +161,27 @@ void verify() {
     string mapping = shBuildMode() == SH_MODE_X64
         ? "usercall:ret=rax;arg0=rcx;arg1=rdx;arg2=stack+16"
         : "usercall:ret=eax;arg0=ecx;arg1=edx;arg2=stack+8;cleanup=8";
+
+    array<uint64> invokeArguments(3);
+    invokeArguments[0] = 11;
+    invokeArguments[1] = 22;
+    invokeArguments[2] = 33;
+    uint64 invokeResult = 0;
+    const uint8 invokeStatus = shCallUsercall(shSharedU64("usercallTarget"),
+        "unsigned int", "unsigned int,unsigned int,unsigned int",
+        mapping, invokeArguments, invokeResult);
+    shSetSharedU64("invokeStatus", invokeStatus);
+    shSetSharedU64("invokeResult", invokeResult);
+    if (invokeStatus != SH_OK) {
+        g_helperStep = 1061;
+        failHelperTest();
+        return;
+    }
+    if (invokeResult != 66 && invokeResult != 102) {
+        g_helperStep = 1062;
+        failHelperTest();
+        return;
+    }
     g_usercallHook = shHookUsercall(shSharedU64("usercallTarget"), "void onUsercall()",
         "unsigned int:unsigned int,unsigned int,unsigned int", mapping);
     if (!shIsValidHook(g_usercallHook)) { failHelperTest(); return; }
