@@ -195,6 +195,10 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_mem_protect(
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_find_pattern(
     uint64_t address, size_t size, const char* ida_pattern, uint64_t* out_address);
 SIGILHOOK_API uint64_t SIGILHOOK_CALL sigilhook_pattern_size(const char* ida_pattern);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
+    uint64_t target, const char* return_type, const char* comma_separated_parameters,
+    const char* call_convention, const uint64_t* arguments, size_t argument_count,
+    uint64_t* out_return_value);
 
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_start(const wchar_t* optional_script_directory);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop(void);

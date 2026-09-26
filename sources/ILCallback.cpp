@@ -410,6 +410,156 @@ uint64_t SIGILHOOK::ILCallback::allocateCode(asmjit::CodeHolder& code, asmjit::S
 	return m_callbackBuf;
 }
 
+uint64_t SIGILHOOK::ILCallback::getInvokeJitFunc(
+	const std::string& retType,
+	const std::vector<std::string>& paramTypes,
+	uint64_t target,
+	const std::string& callConv) {
+	if (target == 0) return fail("Invalid usercall target"), 0;
+	if (paramTypes.size() > Parameters::kMaxArguments) {
+		fail("Invalid callback argument count exceeds 32");
+		return 0;
+	}
+	if (m_callbackBuf != 0) {
+		fail("ILCallback invoke stub already exists");
+		return 0;
+	}
+	const asmjit::Arch arch = asmjit::Arch::kHost;
+	asmjit::CallConvId unusedCallConv = asmjit::CallConvId::kCDecl;
+	std::string parseError;
+	if (!parseCallLayout(callConv, retType, paramTypes, arch, &unusedCallConv, &parseError)) return 0;
+	if (!m_callLayout.usercall) {
+		fail("Invoke stubs require a usercall mapping");
+		return 0;
+	}
+
+	const uint32_t pointerSize = pointerSizeFromArch(arch);
+	const bool is64 = arch == asmjit::Arch::kX64;
+	const uint32_t registerCount = is64 ? SIGILHOOK_REGISTER_COUNT : SIGILHOOK_REGISTER_R8;
+
+	asmjit::CodeHolder code;
+	auto environment = asmjit::Environment::host();
+	environment.setArch(arch);
+	if (code.init(environment) != asmjit::kErrorOk) return fail("ILCallback invoke CodeHolder init failed"), 0;
+	asmjit::StringLogger logger;
+	logger.addFlags(
+		asmjit::FormatFlags::kMachineCode | asmjit::FormatFlags::kExplainImms |
+		asmjit::FormatFlags::kRegCasts | asmjit::FormatFlags::kHexImms |
+		asmjit::FormatFlags::kHexOffsets | asmjit::FormatFlags::kPositions);
+	asmjit::x86::Assembler a(&code);
+	code.setLogger(&logger);
+
+	if (is64) {
+		const uint32_t targetArea = (std::max)(
+			32u, m_callLayout.stackArgumentBytes > pointerSize
+				? m_callLayout.stackArgumentBytes - pointerSize : 0u);
+		const uint32_t localOffset = alignUp(targetArea, 8);
+		const uint32_t frameSize = alignUp(localOffset + 24u, 16) + 8u;
+		a.push(asmjit::x86::rbx);
+		a.push(asmjit::x86::rbp);
+		a.push(asmjit::x86::rsi);
+		a.push(asmjit::x86::rdi);
+		a.push(asmjit::x86::r12);
+		a.push(asmjit::x86::r13);
+		a.push(asmjit::x86::r14);
+		a.push(asmjit::x86::r15);
+		a.sub(asmjit::x86::rsp, frameSize);
+		a.mov(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset), asmjit::x86::rcx);
+		a.mov(asmjit::x86::r10, target);
+		a.mov(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 8), asmjit::x86::r10);
+
+		for (const auto& location : m_callLayout.arguments) {
+			if (location.kind != ArgumentLocation::Kind::Stack) continue;
+			const size_t index = static_cast<size_t>(&location - m_callLayout.arguments.data());
+			a.mov(asmjit::x86::r10, asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset));
+			a.mov(asmjit::x86::r11, asmjit::x86::qword_ptr(asmjit::x86::r10, static_cast<int32_t>(index * sizeof(uint64_t))));
+			a.mov(asmjit::x86::qword_ptr(asmjit::x86::rsp, location.stackOffset - static_cast<int32_t>(pointerSize)), asmjit::x86::r11);
+		}
+		auto loadRegister = [&](uint32_t reg) {
+			for (size_t index = 0; index < m_callLayout.arguments.size(); ++index) {
+				const auto& location = m_callLayout.arguments[index];
+				if (location.kind != ArgumentLocation::Kind::Register || location.reg != reg) continue;
+				a.mov(asmjit::x86::r10, asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset));
+				a.mov(gpRegister(arch, reg), asmjit::x86::qword_ptr(asmjit::x86::r10, static_cast<int32_t>(index * sizeof(uint64_t))));
+			}
+		};
+		for (uint32_t reg = 0; reg < registerCount; ++reg) {
+			if (reg == SIGILHOOK_REGISTER_SP || reg == SIGILHOOK_REGISTER_R10 || reg == SIGILHOOK_REGISTER_R11) continue;
+			loadRegister(reg);
+		}
+		loadRegister(SIGILHOOK_REGISTER_R11);
+		loadRegister(SIGILHOOK_REGISTER_R10);
+
+		a.call(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 8));
+		if (m_callLayout.returnRegister >= 0) {
+			a.mov(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 16),
+				gpRegister(arch, static_cast<uint32_t>(m_callLayout.returnRegister)));
+			a.mov(asmjit::x86::rax, asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 16));
+		} else {
+			a.xor_(asmjit::x86::eax, asmjit::x86::eax);
+		}
+		a.add(asmjit::x86::rsp, frameSize);
+		a.pop(asmjit::x86::r15);
+		a.pop(asmjit::x86::r14);
+		a.pop(asmjit::x86::r13);
+		a.pop(asmjit::x86::r12);
+		a.pop(asmjit::x86::rdi);
+		a.pop(asmjit::x86::rsi);
+		a.pop(asmjit::x86::rbp);
+		a.pop(asmjit::x86::rbx);
+		a.ret();
+	} else {
+		const uint32_t targetArea = m_callLayout.stackArgumentBytes > pointerSize
+			? m_callLayout.stackArgumentBytes - pointerSize : 0u;
+		const uint32_t localOffset = alignUp(targetArea, 4) + 4u;
+		const uint32_t frameSize = alignUp(localOffset + 12u, 16);
+		a.push(asmjit::x86::ebx);
+		a.push(asmjit::x86::esi);
+		a.push(asmjit::x86::edi);
+		a.push(asmjit::x86::ebp);
+		a.sub(asmjit::x86::esp, frameSize);
+		a.mov(asmjit::x86::edi, asmjit::x86::dword_ptr(asmjit::x86::esp, static_cast<int32_t>(frameSize + 20u)));
+		a.mov(asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset), asmjit::x86::edi);
+		a.mov(asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset + 4), static_cast<uint32_t>(target));
+
+		for (const auto& location : m_callLayout.arguments) {
+			if (location.kind != ArgumentLocation::Kind::Stack) continue;
+			const size_t index = static_cast<size_t>(&location - m_callLayout.arguments.data());
+			const uint8_t width = getTypeWidth(paramTypes[index]);
+			a.mov(asmjit::x86::edi, asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset));
+			a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::edi, static_cast<int32_t>(index * sizeof(uint64_t))));
+			a.mov(asmjit::x86::dword_ptr(asmjit::x86::esp, location.stackOffset - static_cast<int32_t>(pointerSize)), asmjit::x86::eax);
+			if (width == 8) {
+				a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::edi, static_cast<int32_t>(index * sizeof(uint64_t) + sizeof(uint32_t))));
+				a.mov(asmjit::x86::dword_ptr(asmjit::x86::esp, location.stackOffset - static_cast<int32_t>(pointerSize) + sizeof(uint32_t)), asmjit::x86::eax);
+			}
+		}
+		for (uint32_t reg = 0; reg < registerCount; ++reg) {
+			if (reg == SIGILHOOK_REGISTER_SP) continue;
+			for (size_t index = 0; index < m_callLayout.arguments.size(); ++index) {
+				const auto& location = m_callLayout.arguments[index];
+				if (location.kind != ArgumentLocation::Kind::Register || location.reg != reg) continue;
+				a.mov(asmjit::x86::edi, asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset));
+				a.mov(gpRegister(arch, reg), asmjit::x86::dword_ptr(asmjit::x86::edi, static_cast<int32_t>(index * sizeof(uint64_t))));
+			}
+		}
+		a.call(asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset + 4));
+		a.add(asmjit::x86::esp, frameSize - m_callLayout.calleeCleanup);
+		a.xor_(asmjit::x86::edx, asmjit::x86::edx);
+		if (m_callLayout.returnRegister >= 0) {
+			a.mov(asmjit::x86::eax, gpRegister(arch, static_cast<uint32_t>(m_callLayout.returnRegister)));
+		} else {
+			a.xor_(asmjit::x86::eax, asmjit::x86::eax);
+		}
+		a.pop(asmjit::x86::ebp);
+		a.pop(asmjit::x86::edi);
+		a.pop(asmjit::x86::esi);
+		a.pop(asmjit::x86::ebx);
+		a.ret();
+	}
+
+	return allocateCode(code, logger);
+}
 uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	const asmjit::FuncSignature& sig,
 	const asmjit::Arch arch,

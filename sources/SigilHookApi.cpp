@@ -146,6 +146,13 @@ std::atomic<uint64_t> g_nextKey{1};
 constexpr size_t kJitSlotCount = 32;
 std::array<std::atomic<std::shared_ptr<JitRecord>>, kJitSlotCount> g_jitSlots{};
 
+std::mutex g_invokerMutex;
+struct InvokerRecord {
+    std::shared_ptr<SIGILHOOK::ILCallback> callback;
+    uint64_t address = 0;
+};
+std::unordered_map<std::string, InvokerRecord> g_invokers;
+
 uint64_t readArgument(
     const SIGILHOOK::ILCallback::Parameters* parameters, uint8_t index, uint8_t width) {
     switch (width) {
@@ -332,7 +339,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020003;
+    return 0x00020004;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -506,7 +513,9 @@ sigilhook_status SIGILHOOK_CALL sigilhook_rehook(sigilhook_handle handle) {
     sigilhook_status status = validateHook(handle, &record);
     if (status != SIGILHOOK_OK) return status;
     try {
-        return record->hook->reHook() ? SIGILHOOK_OK : fail(SIGILHOOK_ERROR_HOOK_FAILED, "Hook reinstallation failed");
+        const bool installed = record->hook->isHooked();
+        const bool result = installed ? record->hook->reHook() : record->hook->hook();
+        return result ? SIGILHOOK_OK : fail(SIGILHOOK_ERROR_HOOK_FAILED, "Hook reinstallation failed");
     } catch (...) {
         return fail(SIGILHOOK_ERROR_EXCEPTION, "rehook() raised an exception");
     }
@@ -860,4 +869,42 @@ uint64_t SIGILHOOK_CALL sigilhook_pattern_size(const char* idaPattern) {
     return idaPattern == nullptr ? 0 : SIGILHOOK::getPatternSize(idaPattern);
 }
 
+sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
+    uint64_t target, const char* returnType, const char* commaSeparatedParameters,
+    const char* callConvention, const uint64_t* arguments, size_t argumentCount,
+    uint64_t* outReturnValue) {
+    if (target == 0 || returnType == nullptr || callConvention == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Target, return type, and usercall mapping are required");
+    }
+    const std::vector<std::string> parameterTypes =
+        splitParameters(commaSeparatedParameters == nullptr ? "" : commaSeparatedParameters);
+    if (parameterTypes.size() != argumentCount || (argumentCount != 0 && arguments == nullptr)) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Usercall argument count does not match the parameter signature");
+    }
+    const std::string key =
+        std::to_string(target) + "|" + returnType + "|" +
+        (commaSeparatedParameters == nullptr ? "" : commaSeparatedParameters) + "|" + callConvention;
+    InvokerRecord invoker;
+    {
+        std::lock_guard lock(g_invokerMutex);
+        const auto iterator = g_invokers.find(key);
+        if (iterator != g_invokers.end()) {
+            invoker = iterator->second;
+        } else {
+            invoker.callback = std::make_shared<SIGILHOOK::ILCallback>();
+            invoker.address = invoker.callback->getInvokeJitFunc(
+                returnType, parameterTypes, target, callConvention);
+            if (invoker.address == 0) {
+                return fail(invoker.callback->lastErrorStatus(), invoker.callback->lastError());
+            }
+            g_invokers.emplace(key, invoker);
+        }
+    }
+    uint64_t dummyArgument = 0;
+    const uint64_t* actualArguments = arguments == nullptr ? &dummyArgument : arguments;
+    const auto invoke = reinterpret_cast<SIGILHOOK::ILCallback::tInvokeCallback>(invoker.address);
+    const uint64_t result = invoke(actualArguments);
+    if (outReturnValue != nullptr) *outReturnValue = result;
+    return SIGILHOOK_OK;
+}
 } // extern "C"

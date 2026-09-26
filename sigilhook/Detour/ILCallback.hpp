@@ -77,6 +77,7 @@ namespace SIGILHOOK {
 		};
 
 		typedef void(*tUserCallback)(const Parameters* params, const uint8_t count, const ReturnValue* ret);
+		typedef uint64_t(*tInvokeCallback)(const uint64_t* arguments);
 
 		ILCallback();
 		~ILCallback();
@@ -92,6 +93,12 @@ namespace SIGILHOOK {
 			const asmjit::Arch arch,
 			const tUserCallback callback,
 			std::string callConv = "");
+
+		uint64_t getInvokeJitFunc(
+			const std::string& retType,
+			const std::vector<std::string>& paramTypes,
+			uint64_t target,
+			const std::string& callConv);
 
 		uint64_t* getTrampolineHolder();
 		uint8_t getTypeWidth(const std::string& type) const;

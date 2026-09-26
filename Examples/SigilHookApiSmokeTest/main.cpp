@@ -201,7 +201,7 @@ uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
 }
 
 int testBasicJitDetour() {
-    CHECK(sigilhook_api_version() >= 0x00020003);
+    CHECK(sigilhook_api_version() >= 0x00020004);
     sigilhook_jit_handle jit{};
     uint64_t callbackAddress = 0;
     CHECK(sigilhook_create_jit_callback(
