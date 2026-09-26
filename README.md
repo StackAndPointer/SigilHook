@@ -10,8 +10,6 @@ that loads scripts from a directory beside the DLL.
 
 The runtime intentionally compiles all application `.as` files into one module. This gives a familiar C/C++-style authoring experience: split source files can call global functions and modify shared globals directly, while `.ash` files provide shared declarations. Native AngelScript modules remain isolated: cross-module calls require `import ... from "Module"` declarations plus `BindAllImportedFunctions()`, and raw global variables are not shared between modules. The smoke test covers this native Provider/Consumer model separately without changing the runtime loader.
 
-The repository keeps only neutral test scripts and standard library headers. Game-specific hook scripts are deployment content and are not retained here.
-
 Place scripts in:
 
 ```text
@@ -105,8 +103,6 @@ register (`R10` on x64 or `EAX` on x86), so custom mappings should not assign
 an argument to that register when redirecting.
 
 ## Assembly helpers
-
-The standard helpers include equivalents for the reference HookAsm API:
 
 - `shDisAsm` and `shDisAsmStatus` decode readable bytes with Zydis
 - `shHtoi` and `shParseHexStatus` parse hexadecimal values
