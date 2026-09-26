@@ -120,14 +120,6 @@ jobs:
           --parallel
           --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest
 
-      - name: Test GCC
-        if: ${{ matrix.platform == 'gcc' }}
-        run: ctest --test-dir "${{ matrix.build_dir }}" --output-on-failure
-
-      - name: Test Windows
-        if: ${{ matrix.platform == 'windows' }}
-        run: ctest --test-dir "${{ matrix.build_dir }}" -C Release --output-on-failure
-
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}
         shell: pwsh
@@ -152,9 +144,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Test GCC
+        if: ${{ matrix.platform == 'gcc' }}
+        run: ctest --test-dir "${{ matrix.build_dir }}" --output-on-failure
+
+      - name: Test Windows
+        if: ${{ matrix.platform == 'windows' }}
+        run: ctest --test-dir "${{ matrix.build_dir }}" -C Release --output-on-failure
+
   release:
     name: Publish GitHub Release
-    if: ${{ inputs.release_tag != '' }}
+    if: ${{ always() && inputs.release_tag != '' }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
