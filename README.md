@@ -6,6 +6,12 @@ SigilHook is an x86/x64 hook runtime derived from PolyHook 2 and powered by
 AngelScript. It exports a stable C ABI and builds an injectable `SigilHook.dll`
 that loads scripts from a directory beside the DLL.
 
+
+## Documentation
+
+- [English usage guide](docs/USAGE.md)
+- [中文使用说明](docs/USAGE.zh-CN.md)
+
 ## Script layout
 
 The runtime intentionally compiles all application `.as` files into one module. This gives a familiar C/C++-style authoring experience: split source files can call global functions and modify shared globals directly, while `.ash` files provide shared declarations. Native AngelScript modules remain isolated: cross-module calls require `import ... from "Module"` declarations plus `BindAllImportedFunctions()`, and raw global variables are not shared between modules. The smoke test covers this native Provider/Consumer model separately without changing the runtime loader.
@@ -50,7 +56,7 @@ The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop
 
 ## Standard helper API
 
-`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 105
+`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 129
 `sh*` functions. It includes both convenience functions that install immediately
 and status-returning functions that preserve the underlying C ABI result:
 
@@ -60,6 +66,7 @@ and status-returning functions that preserve the underlying C ABI result:
 - install, remove, rehook, destroy, state query, trampoline, debug, follow-call,
   maximum-depth, and x64 detour-scheme controls
 - argument, register, flag, return, original-call, and early-return controls
+- 8/16/32/64-bit argument, register, return, and scalar-memory access helpers
 - callback instruction-pointer inspection and control-flow redirection
 - Zydis disassembly, hexadecimal parsing, CMP/TEST flag helpers, FXSAVE/FXRSTOR,
   return snippets, and stack-pointer jump snippets
@@ -84,6 +91,14 @@ AngelScript callbacks can inspect and modify general-purpose registers and flags
 uint64 value = shReg(SH_REG_CX);
 shSetReg(SH_REG_CX, value + 1);
 shSetFlags(shFlags() | 0x40);
+```
+
+Use `shReg16` and `shSetReg16` to read or replace only the low 16 bits while
+preserving the upper bits of the register:
+
+```angelscript
+uint16 low = shReg16(SH_REG_CX);
+shSetReg16(SH_REG_CX, low + 1);
 ```
 
 Register names are case-insensitive: `AX/CX/DX/BX/SP/BP/SI/DI/R8..R15`, including
