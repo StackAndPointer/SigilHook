@@ -49,8 +49,8 @@ struct RuntimeState {
     std::unordered_map<std::string, uint64_t> sharedValues;
     fs::path scriptDirectory;
     fs::path logPath;
-    std::mutex mutex;
-    std::recursive_mutex entryMutex;
+    std::recursive_timed_mutex mutex;
+    std::recursive_timed_mutex entryMutex;
     std::mutex sharedMutex;
     std::mutex scriptHooksMutex;
     std::unordered_set<uint64_t> scriptHooks;
@@ -59,11 +59,11 @@ struct RuntimeState {
     std::atomic<uint32_t> activeCallbacks{0};
     std::condition_variable callbackCondition;
     std::mutex callbackMutex;
-    std::unordered_set<asIScriptContext*> activeContexts;
 };
 
 RuntimeState g_runtime;
 thread_local sigilhook_call_frame* g_currentFrame = nullptr;
+thread_local bool g_unloading = false;
 
 asIScriptFunction* findScriptFunction(const std::string& declaration);
 
@@ -536,59 +536,62 @@ bool beginScriptCallback() {
     return true;
 }
 
-void finishScriptCallback(asIScriptContext* context) {
+struct ExecutionBudget {
+    std::chrono::steady_clock::time_point deadline;
+    bool cancelOnStop = true;
+};
+
+void executionLineCallback(asIScriptContext* context, ExecutionBudget* budget) {
+    if (context == nullptr || budget == nullptr) return;
+    if ((budget->cancelOnStop && g_runtime.stopping.load(std::memory_order_acquire)) ||
+        std::chrono::steady_clock::now() >= budget->deadline) {
+        context->Abort();
+    }
+}
+
+void finishScriptCallback() {
     {
         std::lock_guard lock(g_runtime.callbackMutex);
-        if (context != nullptr) g_runtime.activeContexts.erase(context);
         g_runtime.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
     g_runtime.callbackCondition.notify_all();
 }
 
-bool waitForScriptCallbacks(uint32_t timeoutMs) {
+bool waitForScriptCallbacks(std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(g_runtime.callbackMutex);
     const auto done = [] {
         return g_runtime.activeCallbacks.load(std::memory_order_acquire) == 0;
     };
     if (done()) return true;
 
-    const auto start = std::chrono::steady_clock::now();
-    const auto deadline = start + std::chrono::milliseconds(timeoutMs);
-    const auto abortDeadline = start + std::chrono::milliseconds(timeoutMs / 2);
-    if (g_runtime.callbackCondition.wait_until(lock, abortDeadline, done)) return true;
-
-    std::vector<asIScriptContext*> contexts(
-        g_runtime.activeContexts.begin(), g_runtime.activeContexts.end());
-    lock.unlock();
-    for (asIScriptContext* context : contexts) {
-        if (context != nullptr) context->Abort();
-    }
-    lock.lock();
     return g_runtime.callbackCondition.wait_until(lock, deadline, done);
 }
 
 void scriptJitCallback(sigilhook_call_frame* frame, void* userData) {
     auto* binding = static_cast<ScriptBinding*>(userData);
-    if (binding == nullptr || binding->callback == nullptr || !beginScriptCallback()) return;
+    if (!beginScriptCallback()) return;
+    if (binding == nullptr || binding->callback == nullptr) {
+        finishScriptCallback();
+        return;
+    }
 
     sigilhook_call_frame* previous = g_currentFrame;
     g_currentFrame = frame;
     asIScriptContext* context = g_runtime.engine != nullptr ? g_runtime.engine->RequestContext() : nullptr;
     if (context != nullptr) {
-        {
-            std::lock_guard lock(g_runtime.callbackMutex);
-            g_runtime.activeContexts.insert(context);
-        }
+        ExecutionBudget budget{(std::chrono::steady_clock::time_point::max)()};
+        context->SetLineCallback(asFUNCTION(executionLineCallback), &budget, asCALL_CDECL);
         if (context->Prepare(binding->callback) >= 0) {
             const int result = context->Execute();
             if (result != asEXECUTION_FINISHED) {
                 writeLog("script callback did not finish normally: " + binding->declaration);
             }
         }
+        context->ClearLineCallback();
         g_runtime.engine->ReturnContext(context);
     }
     g_currentFrame = previous;
-    finishScriptCallback(context);
+    finishScriptCallback();
 }
 
 void scriptSetFollowCall(asQWORD handle, int enabled) {
@@ -1189,12 +1192,16 @@ void registerScriptHookApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint64 hookVTable(uint64, uint16, uint64, uint8)", asFUNCTION(scriptHookVTable), asCALL_CDECL);
 }
 
-bool runEntry(asIScriptModule* module, const char* declaration) {
+bool runEntry(asIScriptModule* module, const char* declaration,
+              std::chrono::steady_clock::time_point deadline =
+                  (std::chrono::steady_clock::time_point::max)()) {
     if (module == nullptr) return false;
     asIScriptFunction* function = module->GetFunctionByDecl(declaration);
     if (function == nullptr) return true;
     asIScriptContext* context = g_runtime.engine->CreateContext();
     if (context == nullptr) return false;
+    ExecutionBudget budget{deadline, !g_unloading};
+    context->SetLineCallback(asFUNCTION(executionLineCallback), &budget, asCALL_CDECL);
     const bool result = context->Prepare(function) >= 0 && context->Execute() == asEXECUTION_FINISHED;
     if (context->GetState() != asEXECUTION_FINISHED) {
         const char* exception = context->GetExceptionString();
@@ -1204,34 +1211,32 @@ bool runEntry(asIScriptModule* module, const char* declaration) {
         writeLog(std::string("script entry exception in ") + declaration + ": " + (exception == nullptr ? "unknown" : exception));
         writeLog("exception location: " + std::to_string(exceptionLine) + ":" + std::to_string(exceptionColumn) + " in " + (exceptionSection == nullptr ? "" : exceptionSection));
     }
+    context->ClearLineCallback();
     context->Release();
     return result;
 }
 
-void destroyScriptBindings() {
-    std::vector<std::unique_ptr<ScriptBinding>> bindings;
-    {
-        std::lock_guard bindingsLock(g_runtime.bindingsMutex);
-        bindings.swap(g_runtime.bindings);
-    }
-    for (auto& binding : bindings) {
-        if (binding == nullptr) continue;
-        if (binding->hook.value != 0) {
-            sigilhook_destroy(binding->hook);
-            untrackScriptHook(binding->hook);
-        }
-        if (binding->jit.value != 0) sigilhook_destroy_jit_callback(binding->jit);
-    }
-
+bool destroyScriptBindings() {
     std::vector<uint64_t> hooks;
     {
         std::lock_guard lock(g_runtime.scriptHooksMutex);
         hooks.assign(g_runtime.scriptHooks.begin(), g_runtime.scriptHooks.end());
-        g_runtime.scriptHooks.clear();
     }
+    std::sort(hooks.rbegin(), hooks.rend());
     for (const uint64_t value : hooks) {
-        sigilhook_destroy(sigilhook_handle{value});
+        const auto status = sigilhook_destroy(sigilhook_handle{value});
+        if (status != SIGILHOOK_OK && status != SIGILHOOK_ERROR_NOT_FOUND) return false;
+        untrackScriptHook(sigilhook_handle{value});
     }
+    std::lock_guard bindingsLock(g_runtime.bindingsMutex);
+    for (auto& binding : g_runtime.bindings) {
+        if (binding == nullptr || binding->jit.value == 0) continue;
+        const auto status = sigilhook_destroy_jit_callback(binding->jit);
+        if (status != SIGILHOOK_OK && status != SIGILHOOK_ERROR_NOT_FOUND) return false;
+        binding->jit = {};
+    }
+    g_runtime.bindings.clear();
+    return true;
 }
 
 fs::path modulePath() {
@@ -1254,6 +1259,7 @@ fs::path modulePath() {
 
 sigilhook_status startRuntime(const fs::path& requestedDirectory) {
     std::lock_guard lock(g_runtime.mutex);
+    if (g_runtime.stopping) return SIGILHOOK_ERROR_BUSY;
     if (g_runtime.started) return SIGILHOOK_OK;
     g_runtime.scriptDirectory = requestedDirectory.empty() ? modulePath() / "SigilHook" : requestedDirectory;
     g_runtime.logPath = g_runtime.scriptDirectory / "logs" / "SigilHook.log";
@@ -1270,12 +1276,14 @@ sigilhook_status startRuntime(const fs::path& requestedDirectory) {
 }
 
 sigilhook_status loadDirectory(const fs::path& directory) {
+    if (g_runtime.stopping || asGetActiveContext() != nullptr) return SIGILHOOK_ERROR_BUSY;
     if (!g_runtime.started) {
         const sigilhook_status status = startRuntime(directory);
         if (status != SIGILHOOK_OK) return status;
     }
     std::lock_guard lock(g_runtime.mutex);
-    std::lock_guard<std::recursive_mutex> entryLock(g_runtime.entryMutex);
+    std::lock_guard entryLock(g_runtime.entryMutex);
+    if (!g_runtime.started || g_runtime.stopping) return SIGILHOOK_ERROR_BUSY;
     if (!g_runtime.modules.empty()) {
         writeLog("script load error: a script application is already loaded");
         return SIGILHOOK_ERROR_BUSY;
@@ -1357,35 +1365,73 @@ sigilhook_status loadDirectory(const fs::path& directory) {
     g_runtime.modules.push_back(module);
     if (!runEntry(module, "void main()")) {
         writeLog("entry point failed in " + (root / "main.as").string());
-        runEntry(module, "void unload()");
-        destroyScriptBindings();
+        g_runtime.stopping.store(true, std::memory_order_release);
+        const auto rollbackDeadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS);
+        if (!waitForScriptCallbacks(rollbackDeadline)) {
+            writeLog("rollback deferred: quiesce target calls and stop the runtime before unloading");
+            g_runtime.stopping.store(false, std::memory_order_release);
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
+        const bool previousUnloading = g_unloading;
+        g_unloading = true;
+        const bool unloadResult = runEntry(module, "void unload()", rollbackDeadline);
+        g_unloading = previousUnloading;
+        if (!unloadResult) {
+            writeLog("rollback unload() did not finish normally");
+        }
+        if (!destroyScriptBindings()) {
+            writeLog("rollback deferred: script bindings could not be destroyed");
+            g_runtime.stopping.store(false, std::memory_order_release);
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
         g_runtime.modules.pop_back();
         module->Discard();
+        g_runtime.stopping.store(false, std::memory_order_release);
         return SIGILHOOK_ERROR_SCRIPT;
     }
     return SIGILHOOK_OK;
 }
 
 sigilhook_status stopRuntime(uint32_t timeoutMs) {
-    std::unique_lock lock(g_runtime.mutex);
-    if (!g_runtime.started) return SIGILHOOK_OK;
-    {
-        std::lock_guard callbackLock(g_runtime.callbackMutex);
-        g_runtime.stopping.store(true, std::memory_order_release);
-    }
-    if (!waitForScriptCallbacks(timeoutMs)) {
-        writeLog("runtime stop timed out while waiting for active script callbacks; hooks remain installed");
-        {
-            std::lock_guard callbackLock(g_runtime.callbackMutex);
-            g_runtime.stopping.store(false, std::memory_order_release);
-        }
+    if (asGetActiveContext() != nullptr) {
+        writeLog("runtime stop requested from an active script context; call it from a native thread");
         return SIGILHOOK_ERROR_BUSY;
     }
-    std::lock_guard<std::recursive_mutex> entryLock(g_runtime.entryMutex);
-    for (auto iterator = g_runtime.modules.rbegin(); iterator != g_runtime.modules.rend(); ++iterator) {
-        runEntry(*iterator, "void unload()");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    g_runtime.stopping.store(true, std::memory_order_release);
+    std::unique_lock lock(g_runtime.mutex, std::defer_lock);
+    if (!lock.try_lock_until(deadline)) {
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_ERROR_BUSY;
     }
-    destroyScriptBindings();
+    std::unique_lock entryLock(g_runtime.entryMutex, std::defer_lock);
+    if (!entryLock.try_lock_until(deadline)) {
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_ERROR_BUSY;
+    }
+    if (!g_runtime.started) {
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_OK;
+    }
+    if (!waitForScriptCallbacks(deadline)) {
+        writeLog("runtime stop pending: quiesce native target calls, then retry");
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_ERROR_BUSY;
+    }
+
+    const bool previousUnloading = g_unloading;
+    bool unloadSucceeded = true;
+    g_unloading = true;
+    for (auto iterator = g_runtime.modules.rbegin(); iterator != g_runtime.modules.rend(); ++iterator) {
+        unloadSucceeded = runEntry(*iterator, "void unload()", deadline) && unloadSucceeded;
+    }
+    g_unloading = previousUnloading;
+    if (!destroyScriptBindings()) {
+        writeLog("runtime cleanup failed; resources retained for a stop retry");
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_ERROR_BUSY;
+    }
     for (asIScriptModule* module : g_runtime.modules) {
         if (module != nullptr) module->Discard();
     }
@@ -1397,7 +1443,7 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
     g_runtime.started = false;
     g_runtime.stopping.store(false, std::memory_order_release);
     sigilhook_set_log_callback(nullptr, nullptr);
-    return SIGILHOOK_OK;
+    return unloadSucceeded ? SIGILHOOK_OK : SIGILHOOK_ERROR_SCRIPT;
 }
 
 } // namespace
@@ -1443,7 +1489,9 @@ sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* nam
 
 sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration) {
     if (declaration == nullptr) return SIGILHOOK_ERROR_INVALID_ARGUMENT;
-    std::lock_guard<std::recursive_mutex> entryLock(g_runtime.entryMutex);
+    if (g_runtime.stopping && !g_unloading) return SIGILHOOK_ERROR_BUSY;
+    std::lock_guard entryLock(g_runtime.entryMutex);
+    if (g_runtime.stopping && !g_unloading) return SIGILHOOK_ERROR_BUSY;
     bool all = true;
     for (asIScriptModule* module : g_runtime.modules) {
         all = runEntry(module, declaration) && all;

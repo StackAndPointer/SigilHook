@@ -3,8 +3,13 @@
 #ifndef SIGILHOOK_H
 #define SIGILHOOK_H
 
-#include <stddef.h>
-#include <stdint.h>
+#if defined(__cplusplus)
+#  include <cstddef>
+#  include <cstdint>
+#else
+#  include <stddef.h>
+#  include <stdint.h>
+#endif
 
 #if defined(_WIN32)
 #  if defined(SIGILHOOK_BUILDING_DLL)
