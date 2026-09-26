@@ -427,6 +427,7 @@ int testInvalidMappings() {
     CHECK(expectJitFailure("usercall:ret=ax;arg0=cx;arg1=cx", SIGILHOOK_ERROR_INVALID_ARGUMENT) == 0);
     CHECK(expectJitFailure("usercall:ret=ax;ret=bx;arg0=cx;arg1=dx", SIGILHOOK_ERROR_INVALID_ARGUMENT) == 0);
     CHECK(expectJitFailure("usercall:arg0=cx;arg1=dx", SIGILHOOK_ERROR_INVALID_ARGUMENT) == 0);
+    CHECK(expectJitFailure("usercall:ret=cx;arg0=cx;arg1=dx", SIGILHOOK_ERROR_INVALID_ARGUMENT) == 0);
     CHECK(expectJitFailure("usercall:ret=ax;arg0=stack+2", SIGILHOOK_ERROR_INVALID_ARGUMENT) == 0);
     const char* stackMapping = sigilhook_build_mode() == SIGILHOOK_MODE_X64
         ? "usercall:ret=ax;arg0=stack+16;arg1=stack+16"
@@ -486,6 +487,7 @@ int testUsercall() {
     CHECK(sigilhook_unhook(hook) == SIGILHOOK_OK);
     CHECK(sigilhook_destroy(hook) == SIGILHOOK_OK);
     CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    CHECK(sigilhook_clear_invoker_cache() == SIGILHOOK_OK);
     return 0;
 }
 

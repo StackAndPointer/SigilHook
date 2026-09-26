@@ -75,6 +75,11 @@ and status-returning functions that preserve the underlying C ABI result:
 - script JIT creation, detour binding, JIT destruction, status strings, and
   direct `shCallUsercall` invocation
 
+The direct usercall invoker caches generated stubs by target and signature.
+`sigilhook_runtime_stop()` clears this cache automatically; native hosts that
+keep the C ABI alive without stopping the runtime can call
+`sigilhook_clear_invoker_cache()` explicitly.
+
 The convenience wrappers discard status where the legacy API historically did;
 use the `sh...Status` or explicit status-returning forms when error handling is
 required. `sigilhook_runtime_start` and `sigilhook_runtime_stop` remain C ABI-only
@@ -193,7 +198,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
   and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x00020006`. All addresses cross the ABI as `uint64_t`.
+The current API version is `0x00020007`. All addresses cross the ABI as `uint64_t`.
 Hook construction returns status codes instead of throwing C++ exceptions across
 the boundary.
 

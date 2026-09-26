@@ -164,7 +164,12 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-The current C API version is `0x00020006`.
+The current C API version is `0x00020007`.
+
+`sigilhook_invoke_usercall` caches generated invoker stubs by target and
+signature. Runtime shutdown clears that cache. A native host that uses the C
+ABI without stopping the runtime should call
+`sigilhook_clear_invoker_cache()` when those targets are no longer needed.
 
 Status codes are:
 

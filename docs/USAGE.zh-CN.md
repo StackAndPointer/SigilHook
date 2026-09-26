@@ -164,7 +164,10 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-当前 C API 版本是 `0x00020006`。
+当前 C API 版本是 `0x00020007`。
+
+`sigilhook_invoke_usercall` 会按目标地址和签名缓存生成的调用桩。运行时停止时会自动清理该缓存；如果原生宿主持续使用 C ABI 而不停止运行时，应在这些目标不再使用时显式调用
+`sigilhook_clear_invoker_cache()`。
 
 状态码：
 

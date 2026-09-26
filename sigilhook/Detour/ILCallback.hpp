@@ -61,11 +61,12 @@ namespace SIGILHOOK {
 
 		struct ArgumentLocation {
 			enum class Kind : uint8_t {
+				None,
 				Register,
 				Stack
 			};
 
-			Kind kind = Kind::Register;
+			Kind kind = Kind::None;
 			uint8_t reg = SIGILHOOK_REGISTER_AX;
 			int32_t stackOffset = 0;
 		};

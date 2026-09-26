@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <condition_variable>
 #include <cstring>
 #include <functional>
 #include <iomanip>
@@ -139,6 +140,10 @@ struct JitRecord {
     uint64_t target = 0;
     std::vector<uint8_t> argumentWidths;
     std::atomic<uint64_t> boundHook{0};
+    std::mutex callbackMutex;
+    std::condition_variable callbackCondition;
+    uint32_t activeCallbacks = 0;
+    bool acceptingCallbacks = true;
 };
 
 struct HookRecord {
@@ -194,13 +199,35 @@ void writeStackArgument(
     std::memcpy(destination, &value, width);
 }
 
+bool beginJitCallback(const std::shared_ptr<JitRecord>& record) {
+    std::lock_guard lock(record->callbackMutex);
+    if (!record->acceptingCallbacks) return false;
+    ++record->activeCallbacks;
+    return true;
+}
+
+void finishJitCallback(const std::shared_ptr<JitRecord>& record) {
+    {
+        std::lock_guard lock(record->callbackMutex);
+        if (record->activeCallbacks != 0) --record->activeCallbacks;
+    }
+    record->callbackCondition.notify_all();
+}
+
 void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* parameters, uint8_t count, const SIGILHOOK::ILCallback::ReturnValue* returnValue) {
+    if (returnValue == nullptr) return;
     auto* result = const_cast<SIGILHOOK::ILCallback::ReturnValue*>(returnValue);
     result->m_retVal = 0;
     result->m_callOriginal = 1;
     result->m_overrideReturn = 0;
     std::shared_ptr<JitRecord> record = slot < kJitSlotCount ? g_jitSlots[slot].load(std::memory_order_acquire) : nullptr;
-    if (record == nullptr || !record->userCallback || parameters == nullptr) return;
+    if (record == nullptr || !record->userCallback || parameters == nullptr ||
+        !beginJitCallback(record)) return;
+
+    struct CallbackGuard {
+        std::shared_ptr<JitRecord> record;
+        ~CallbackGuard() { finishJitCallback(record); }
+    } callbackGuard{record};
 
     auto* registers = reinterpret_cast<sigilhook_register_context*>(const_cast<uint64_t*>(parameters->m_registers));
     const size_t availableRegisters = currentMode() == SIGILHOOK::Mode::x64 ? SIGILHOOK_REGISTER_COUNT : SIGILHOOK_REGISTER_R8;
@@ -388,7 +415,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020006;
+    return 0x00020007;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -542,18 +569,29 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle handle) {
         if (iterator == g_hooks.end()) {
             return fail(SIGILHOOK_ERROR_NOT_FOUND, "The hook handle does not exist");
         }
-        record = std::move(iterator->second);
-        g_hooks.erase(iterator);
+        record = iterator->second;
     }
     if (record && record->hook) {
         try {
-            record->hook->unHook();
+            if (record->hook->isHooked() && !record->hook->unHook()) {
+                return fail(SIGILHOOK_ERROR_HOOK_FAILED, "Hook removal failed during destruction");
+            }
+        } catch (const std::exception& exception) {
+            return fail(SIGILHOOK_ERROR_EXCEPTION, std::string("Hook destruction raised an exception: ") + exception.what());
         } catch (...) {
+            return fail(SIGILHOOK_ERROR_EXCEPTION, "Hook destruction raised an unknown exception");
         }
     }
     if (record && record->jit && record->jit->callback) {
         *record->jit->callback->getTrampolineHolder() = 0;
         record->jit->boundHook.store(0, std::memory_order_release);
+    }
+    {
+        std::lock_guard lock(g_registryMutex);
+        const auto iterator = g_hooks.find(handle.value);
+        if (iterator != g_hooks.end() && iterator->second == record) {
+            g_hooks.erase(iterator);
+        }
     }
     return SIGILHOOK_OK;
 }
@@ -864,11 +902,18 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy_jit_callback(sigilhook_jit_han
         if (iterator->second->boundHook.load(std::memory_order_acquire) != 0) {
             return fail(SIGILHOOK_ERROR_BUSY, "The JIT callback is still bound to a hook");
         }
-        if (iterator->second->slot < kJitSlotCount) {
-            g_jitSlots[iterator->second->slot].store({}, std::memory_order_release);
-        }
         owner = iterator->second;
         g_jits.erase(iterator);
+    }
+    if (owner->slot < kJitSlotCount) {
+        g_jitSlots[owner->slot].store({}, std::memory_order_release);
+    }
+    {
+        std::unique_lock lock(owner->callbackMutex);
+        owner->acceptingCallbacks = false;
+        owner->callbackCondition.wait(lock, [&owner] {
+            return owner->activeCallbacks == 0;
+        });
     }
     return SIGILHOOK_OK;
 }
@@ -1170,6 +1215,15 @@ sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
     const auto invoke = reinterpret_cast<SIGILHOOK::ILCallback::tInvokeCallback>(invoker.address);
     const uint64_t result = invoke(actualArguments);
     if (outReturnValue != nullptr) *outReturnValue = result;
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_clear_invoker_cache(void) {
+    std::unordered_map<std::string, InvokerRecord> discarded;
+    {
+        std::lock_guard lock(g_invokerMutex);
+        discarded.swap(g_invokers);
+    }
     return SIGILHOOK_OK;
 }
 } // extern "C"

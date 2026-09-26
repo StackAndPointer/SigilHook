@@ -227,6 +227,7 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
     uint64_t target, const char* return_type, const char* comma_separated_parameters,
     const char* call_convention, const uint64_t* arguments, size_t argument_count,
     uint64_t* out_return_value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_clear_invoker_cache(void);
 
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_start(const wchar_t* optional_script_directory);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop(void);

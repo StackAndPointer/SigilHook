@@ -270,6 +270,11 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 					if (outError != nullptr) *outError = "x86 usercall cannot use R8-R15";
 					return fail("x86 usercall cannot use R8-R15");
 				}
+				if (usedRegisters[reg]) {
+					if (outError != nullptr) *outError = "Duplicate or overlapping usercall register: " + value;
+					return fail("Duplicate or overlapping usercall register: " + value);
+				}
+				usedRegisters[reg] = true;
 				m_callLayout.returnRegister = reg;
 			}
 			continue;
@@ -620,10 +625,10 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	m_callLayout.arguments.resize(sig.argCount());
 	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
 		const auto& value = func->detail().arg(argIndex);
-		if (value.isReg()) {
+		if (isGpFuncValue(value)) {
 			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::Register;
 			m_callLayout.arguments[argIndex].reg = static_cast<uint8_t>(value.regId());
-		} else {
+		} else if (value.isStack()) {
 			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::Stack;
 			m_callLayout.arguments[argIndex].stackOffset = value.stackOffset();
 		}

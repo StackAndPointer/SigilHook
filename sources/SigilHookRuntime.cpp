@@ -579,7 +579,11 @@ void scriptJitCallback(sigilhook_call_frame* frame, void* userData) {
     g_currentFrame = frame;
     asIScriptContext* context = g_runtime.engine != nullptr ? g_runtime.engine->RequestContext() : nullptr;
     if (context != nullptr) {
-        ExecutionBudget budget{(std::chrono::steady_clock::time_point::max)()};
+        ExecutionBudget budget{
+            std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS),
+            true
+        };
         context->SetLineCallback(asFUNCTION(executionLineCallback), &budget, asCALL_CDECL);
         if (context->Prepare(binding->callback) >= 0) {
             const int result = context->Execute();
@@ -1265,9 +1269,19 @@ sigilhook_status startRuntime(const fs::path& requestedDirectory) {
     g_runtime.logPath = g_runtime.scriptDirectory / "logs" / "SigilHook.log";
     std::error_code error;
     fs::create_directories(g_runtime.logPath.parent_path(), error);
+    if (error) {
+        g_runtime.scriptDirectory.clear();
+        g_runtime.logPath.clear();
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
     sigilhook_set_log_callback(runtimeLogCallback, nullptr);
     g_runtime.engine = asCreateScriptEngine();
-    if (g_runtime.engine == nullptr) return SIGILHOOK_ERROR_SCRIPT;
+    if (g_runtime.engine == nullptr) {
+        sigilhook_set_log_callback(nullptr, nullptr);
+        g_runtime.scriptDirectory.clear();
+        g_runtime.logPath.clear();
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
     g_runtime.engine->SetMessageCallback(asFUNCTION(messageCallback), nullptr, asCALL_CDECL);
     registerScriptApi(g_runtime.engine);
     registerScriptHookApi(g_runtime.engine);
@@ -1277,16 +1291,28 @@ sigilhook_status startRuntime(const fs::path& requestedDirectory) {
 
 sigilhook_status loadDirectory(const fs::path& directory) {
     if (g_runtime.stopping || asGetActiveContext() != nullptr) return SIGILHOOK_ERROR_BUSY;
+    const bool startedHere = !g_runtime.started.load(std::memory_order_acquire);
     if (!g_runtime.started) {
         const sigilhook_status status = startRuntime(directory);
         if (status != SIGILHOOK_OK) return status;
     }
+    const auto failLoad = [startedHere](sigilhook_status status) {
+        if (startedHere && g_runtime.modules.empty() && g_runtime.engine != nullptr) {
+            g_runtime.engine->ShutDownAndRelease();
+            g_runtime.engine = nullptr;
+            g_runtime.started = false;
+            g_runtime.scriptDirectory.clear();
+            g_runtime.logPath.clear();
+            sigilhook_set_log_callback(nullptr, nullptr);
+        }
+        return status;
+    };
     std::lock_guard lock(g_runtime.mutex);
     std::lock_guard entryLock(g_runtime.entryMutex);
     if (!g_runtime.started || g_runtime.stopping) return SIGILHOOK_ERROR_BUSY;
     if (!g_runtime.modules.empty()) {
         writeLog("script load error: a script application is already loaded");
-        return SIGILHOOK_ERROR_BUSY;
+        return failLoad(SIGILHOOK_ERROR_BUSY);
     }
 
     const fs::path root = normalizedPath(directory);
@@ -1294,14 +1320,14 @@ sigilhook_status loadDirectory(const fs::path& directory) {
     std::error_code mainError;
     if (!fs::is_regular_file(mainPath, mainError) || mainError) {
         writeLog("script load error: main.as was not found in " + root.string());
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
 
     std::vector<fs::path> scripts;
     std::string collectionError;
     if (!collectScriptFiles(root, scripts, collectionError)) {
         writeLog("script load error: " + collectionError);
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
 
     IncludeLoadState includeState;
@@ -1313,7 +1339,7 @@ sigilhook_status loadDirectory(const fs::path& directory) {
         std::string source;
         if (!processScriptFile(script, includeState, false, 0, source)) {
             writeLog("script load error: " + includeState.error);
-            return SIGILHOOK_ERROR_SCRIPT;
+            return failLoad(SIGILHOOK_ERROR_SCRIPT);
         }
         const std::string name = sectionName(script, root);
         if (script == mainPath) mainSectionName = name;
@@ -1323,33 +1349,33 @@ sigilhook_status loadDirectory(const fs::path& directory) {
     asIScriptModule* module = g_runtime.engine->GetModule("SigilHook.Application", asGM_ALWAYS_CREATE);
     if (module == nullptr) {
         writeLog("failed to create SigilHook.Application module");
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
     for (const ScriptSection& section : sections) {
         if (module->AddScriptSection(section.name.c_str(), section.source.c_str(), section.source.size()) < 0) {
             writeLog("failed to add script section " + section.name);
             module->Discard();
-            return SIGILHOOK_ERROR_SCRIPT;
+            return failLoad(SIGILHOOK_ERROR_SCRIPT);
         }
     }
     if (module->Build() < 0) {
         writeLog("failed to build SigilHook.Application; entry definitions must be unique and valid");
         module->Discard();
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
 
     asIScriptFunction* mainFunction = module->GetFunctionByDecl("void main()");
     if (mainFunction == nullptr) {
         writeLog("script load error: void main() is missing from main.as");
         module->Discard();
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
     const char* mainOwner = nullptr;
     if (mainFunction->GetDeclaredAt(&mainOwner, nullptr, nullptr) < 0 ||
         mainOwner == nullptr || mainSectionName != mainOwner) {
         writeLog("script load error: void main() must be defined in root main.as");
         module->Discard();
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
     asIScriptFunction* unloadFunction = module->GetFunctionByDecl("void unload()");
     if (unloadFunction != nullptr) {
@@ -1358,7 +1384,7 @@ sigilhook_status loadDirectory(const fs::path& directory) {
             unloadOwner == nullptr || mainSectionName != unloadOwner) {
             writeLog("script load error: optional void unload() must be defined in root main.as");
             module->Discard();
-            return SIGILHOOK_ERROR_SCRIPT;
+            return failLoad(SIGILHOOK_ERROR_SCRIPT);
         }
     }
 
@@ -1385,10 +1411,11 @@ sigilhook_status loadDirectory(const fs::path& directory) {
             g_runtime.stopping.store(false, std::memory_order_release);
             return SIGILHOOK_ERROR_SCRIPT;
         }
+        sigilhook_clear_invoker_cache();
         g_runtime.modules.pop_back();
         module->Discard();
         g_runtime.stopping.store(false, std::memory_order_release);
-        return SIGILHOOK_ERROR_SCRIPT;
+        return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
     return SIGILHOOK_OK;
 }
@@ -1432,6 +1459,7 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
         g_runtime.stopping.store(false, std::memory_order_release);
         return SIGILHOOK_ERROR_BUSY;
     }
+    sigilhook_clear_invoker_cache();
     for (asIScriptModule* module : g_runtime.modules) {
         if (module != nullptr) module->Discard();
     }
