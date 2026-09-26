@@ -140,6 +140,29 @@ void testStatusMemoryAndRuntime() {
     }
 }
 
+void testStatusAssemblyHelpers() {
+    string text = "";
+    uint decoded = 0;
+    if (shDisAsmStatus(shSharedU64("target"), 30, text, decoded) != SH_OK ||
+        text.isEmpty() || decoded == 0) { shSetSharedU64("scriptBad", 4050); return; }
+    uint64 parsed = 0;
+    if (shParseHexStatus("0xAbCd", parsed) != SH_OK || parsed != 0xabcd ||
+        shParseHexStatus("invalid", parsed) != SH_ERROR_INVALID_ARGUMENT) {
+        shSetSharedU64("scriptBad", 4051); return;
+    }
+    array<uint8> state(512);
+    if (shAsmFxsave(state) != SH_OK || shAsmFxrstor(state) != SH_OK) {
+        shSetSharedU64("scriptBad", 4052); return;
+    }
+    uint64 snippet = 0;
+    if (shAsmRetStatus(8, snippet) != SH_OK || snippet == 0 ||
+        shAsmRetFree(snippet) != SH_OK || shAsmRetFree(snippet) != SH_ERROR_NOT_FOUND) {
+        shSetSharedU64("scriptBad", 4053); return;
+    }
+    if (shAsmMovEspAndJmpStatus(0x10000, 0x20000, snippet) != SH_OK || snippet == 0 ||
+        shAsmMovEspAndJmpFree(snippet) != SH_OK) { shSetSharedU64("scriptBad", 4054); return; }
+}
+
 void main() {
     shStatusString(SH_OK);
     testStatusDetour();
@@ -151,4 +174,6 @@ void main() {
     testStatusJit();
     if (shSharedU64("scriptBad") != 0) return;
     testStatusMemoryAndRuntime();
+    if (shSharedU64("scriptBad") != 0) return;
+    testStatusAssemblyHelpers();
 }

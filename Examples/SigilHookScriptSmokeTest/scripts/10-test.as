@@ -33,9 +33,45 @@ void verifyHelperApi() {
     g_helperStep = 201;
     if (shApiVersion() < 0x00020004 ||
         shBuildMode() != uint8(shSharedU64("expectedBuildMode"))) { failHelperTest(); return; }
+    if (shApiVersion() < 0x00020005) { failHelperTest(); return; }
 
     g_helperStep = 202;
     if (shIsValidHook(SH_INVALID_HANDLE) || !shIsValidHook(1)) { failHelperTest(); return; }
+
+    g_helperStep = 203;
+    const string disassembly = shDisAsm(shSharedU64("target"), 30);
+    uint decodedBytes = 0;
+    string statusText = "";
+    const uint8 disassemblyStatus = shDisAsmStatus(shSharedU64("target"), 30, statusText, decodedBytes);
+    if (disassembly.isEmpty() || disassemblyStatus != SH_OK || decodedBytes == 0 || statusText.isEmpty()) {
+        failHelperTest(); return;
+    }
+    g_helperStep = 204;
+    if (shHtoi("0x123AbC") != 0x123abc || shHtoi("xyz") != 0) { failHelperTest(); return; }
+    g_helperStep = 205;
+    const uint64 cmpFlags = shAsmCmp(1, 2, 4);
+    const uint64 equalFlags = shAsmCmp(7, 7, 4);
+    const uint64 testFlags = shAsmTest(0xf0, 0x0f, 4);
+    if ((cmpFlags & 0x001) == 0 || (cmpFlags & 0x040) != 0 ||
+        (equalFlags & 0x040) == 0 || (equalFlags & 0x001) != 0 ||
+        (testFlags & 0x040) == 0 || (testFlags & 0x001) != 0 || (testFlags & 0x800) != 0) {
+        failHelperTest(); return;
+    }
+    g_helperStep = 206;
+    array<uint8> firstFx(512);
+    array<uint8> secondFx(512);
+    if (shAsmFxsave(firstFx) != SH_OK || shAsmFxrstor(firstFx) != SH_OK ||
+        shAsmFxsave(secondFx) != SH_OK) { failHelperTest(); return; }
+    for (uint index = 0; index < firstFx.length(); ++index) {
+        if (firstFx[index] != secondFx[index]) { failHelperTest(); return; }
+    }
+    g_helperStep = 207;
+    uint64 returnSnippet = 0;
+    uint64 stackSnippet = 0;
+    if (shAsmRetStatus(0, returnSnippet) != SH_OK || returnSnippet == 0 ||
+        shAsmRetFree(returnSnippet) != SH_OK || shAsmRetFree(returnSnippet) != SH_ERROR_NOT_FOUND ||
+        shAsmMovEspAndJmpStatus(0x10000, 0x20000, stackSnippet) != SH_OK || stackSnippet == 0 ||
+        shAsmMovEspAndJmpFree(stackSnippet) != SH_OK) { failHelperTest(); return; }
 
     g_helperStep = 210;
     if (!shIsHooked(g_hook) || shHookType(g_hook) != SH_HOOK_DETOUR ||
@@ -93,7 +129,9 @@ void onTarget() {
     if (shArg(0) != 1 || shArg8(0) != 1 || shArg16(0) != 1 ||
         shArg32(0) != 1 || shReturn() != 0) { failHelperTest(); return; }
     shSetArg(0, 41);
-    shReturnEarly(77);
+    if (shInstructionPointer() != shSharedU64("target") ||
+        !shSetInstructionPointer(shTrampoline(g_hook))) { failHelperTest(); return; }
+    shSkipOriginal();
 }
 
 void onConvention() {

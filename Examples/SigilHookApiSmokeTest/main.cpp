@@ -7,8 +7,11 @@
 
 #include <cstdint>
 #include <cstring>
+#include <array>
 #include <functional>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #define CHECK(expression) do { if (!(expression)) { std::cerr << "check failed: " #expression << " at line " << __LINE__ << '\n'; char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); std::cerr << error << '\n'; return __LINE__; } } while (false)
 
@@ -20,6 +23,15 @@ volatile int g_badArgumentValues = 0;
 int g_usercallMode = 0;
 volatile int g_usercallTargetCalls = 0;
 int g_badUsercallFrame = 0;
+uint64_t g_redirectAddress = 0;
+uint64_t g_expectedInstructionPointer = 0;
+int g_badInstructionPointer = 0;
+volatile int g_redirectTargetCalls = 0;
+volatile int g_stackTargetCalls = 0;
+volatile int g_stackRedirectCalls = 0;
+int g_badStackFrame = 0;
+uint64_t g_stackExpectedInstructionPointer = 0;
+uint64_t g_stackRedirectAddress = 0;
 
 #if defined(_MSC_VER)
 __declspec(noinline)
@@ -31,6 +43,32 @@ int SIGILHOOK_CALL target(int value) {
     }
     ++g_targetCalls;
     return result + 1;
+}
+
+__declspec(noinline) int SIGILHOOK_CALL stackTarget(int a, int b, int c, int d, int e) {
+    ++g_stackTargetCalls;
+    return a + b + c + d + e;
+}
+
+__declspec(noinline) int SIGILHOOK_CALL stackRedirectTarget(int a, int b, int c, int d, int e) {
+    ++g_stackRedirectCalls;
+    return e + 100;
+}
+
+void SIGILHOOK_CALL stackRedirectCallback(sigilhook_call_frame* frame, void*) {
+    if (frame->argument_count != 5 || frame->arguments[4] != 5) ++g_badStackFrame;
+    uint64_t instructionPointer = 0;
+    if (sigilhook_call_frame_get_instruction_pointer(frame, &instructionPointer) != SIGILHOOK_OK ||
+        instructionPointer != g_stackExpectedInstructionPointer ||
+        sigilhook_call_frame_set_instruction_pointer(frame, g_stackRedirectAddress) != SIGILHOOK_OK) {
+        ++g_badStackFrame;
+    }
+    *frame->call_original = 0;
+}
+
+__declspec(noinline) int SIGILHOOK_CALL redirectTarget(int value) {
+    ++g_redirectTargetCalls;
+    return value + 5;
 }
 
 void SIGILHOOK_CALL callback(sigilhook_call_frame* frame, void*) {
@@ -51,6 +89,16 @@ void SIGILHOOK_CALL callback(sigilhook_call_frame* frame, void*) {
     case 2:
         *frame->call_original = 1;
         break;
+    case 3: {
+        uint64_t instructionPointer = 0;
+        if (sigilhook_call_frame_get_instruction_pointer(frame, &instructionPointer) != SIGILHOOK_OK ||
+            instructionPointer != g_expectedInstructionPointer ||
+            sigilhook_call_frame_set_instruction_pointer(frame, g_redirectAddress) != SIGILHOOK_OK) {
+            ++g_badInstructionPointer;
+        }
+        *frame->call_original = 0;
+        break;
+    }
     default:
         break;
     }
@@ -201,7 +249,7 @@ uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
 }
 
 int testBasicJitDetour() {
-    CHECK(sigilhook_api_version() >= 0x00020004);
+    CHECK(sigilhook_api_version() >= 0x00020005);
     sigilhook_jit_handle jit{};
     uint64_t callbackAddress = 0;
     CHECK(sigilhook_create_jit_callback(
@@ -234,9 +282,65 @@ int testBasicJitDetour() {
     CHECK(g_targetCalls == 2);
     CHECK(g_badArgumentValues == 0);
 
+    g_expectedInstructionPointer = reinterpret_cast<uint64_t>(&target);
+    g_redirectAddress = reinterpret_cast<uint64_t>(&redirectTarget);
+    g_testMode = 3;
+    const int redirectResult = target(1);
+    CHECK(redirectResult == 46);
+    CHECK(g_targetCalls == 2);
+    CHECK(g_redirectTargetCalls == 1);
+    CHECK(g_badInstructionPointer == 0);
+
     CHECK(sigilhook_unhook(hook) == SIGILHOOK_OK);
     CHECK(sigilhook_destroy(hook) == SIGILHOOK_OK);
     CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    return 0;
+}
+
+int testAssemblyHelpers() {
+    const std::vector<uint8_t> code(5, 0x90);
+    char disassembly[4096]{};
+    size_t decoded = 0;
+    CHECK(sigilhook_disassemble(reinterpret_cast<uint64_t>(code.data()), 5,
+        disassembly, sizeof(disassembly), &decoded) == SIGILHOOK_OK);
+    CHECK(decoded == code.size());
+    CHECK(std::string(disassembly).find("nop") != std::string::npos);
+    CHECK(sigilhook_disassemble(reinterpret_cast<uint64_t>(code.data()), 0,
+        disassembly, sizeof(disassembly), &decoded) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+
+    uint64_t parsed = 0;
+    CHECK(sigilhook_parse_hex("0x123AbC", &parsed) == SIGILHOOK_OK);
+    CHECK(parsed == 0x123abc);
+    CHECK(sigilhook_parse_hex("xyz", &parsed) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+
+    uint64_t flags = 0;
+    CHECK(sigilhook_compute_cmp_flags(1, 2, 4, &flags) == SIGILHOOK_OK);
+    CHECK((flags & 0x001) != 0 && (flags & 0x040) == 0);
+    CHECK(sigilhook_compute_cmp_flags(7, 7, 4, &flags) == SIGILHOOK_OK);
+    CHECK((flags & 0x040) != 0 && (flags & 0x001) == 0);
+    CHECK(sigilhook_compute_test_flags(0xf0, 0x0f, 4, &flags) == SIGILHOOK_OK);
+    CHECK((flags & 0x040) != 0 && (flags & 0x001) == 0 && (flags & 0x800) == 0);
+    CHECK(sigilhook_compute_cmp_flags(1, 2, 3, &flags) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+
+    alignas(16) std::array<uint8_t, 512> firstState{};
+    alignas(16) std::array<uint8_t, 512> secondState{};
+    CHECK(sigilhook_fxsave(firstState.data(), firstState.size()) == SIGILHOOK_OK);
+    CHECK(sigilhook_fxrstor(firstState.data(), firstState.size()) == SIGILHOOK_OK);
+    CHECK(sigilhook_fxsave(secondState.data(), secondState.size()) == SIGILHOOK_OK);
+    CHECK(firstState == secondState);
+    CHECK(sigilhook_fxsave(firstState.data(), 16) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+
+    uint64_t returnSnippet = 0;
+    uint64_t stackSnippet = 0;
+    CHECK(sigilhook_create_return_snippet(4, &returnSnippet) == SIGILHOOK_OK);
+    CHECK(returnSnippet != 0);
+    CHECK(sigilhook_destroy_snippet(returnSnippet) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy_snippet(returnSnippet) == SIGILHOOK_ERROR_NOT_FOUND);
+    const uint64_t pointer = sigilhook_build_mode() == SIGILHOOK_MODE_X64 ? 0x10000 : 0x10000;
+    CHECK(sigilhook_create_stack_jump_snippet(pointer, 0x20000, &stackSnippet) == SIGILHOOK_OK);
+    CHECK(stackSnippet != 0);
+    CHECK(sigilhook_destroy_snippet(stackSnippet) == SIGILHOOK_OK);
+    CHECK(sigilhook_create_stack_jump_snippet(0, 0x20000, &stackSnippet) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
     return 0;
 }
 
@@ -357,10 +461,37 @@ int testUsercall() {
     return 0;
 }
 
+int testStackArgumentRedirect() {
+    g_stackTargetCalls = 0;
+    g_stackRedirectCalls = 0;
+    g_badStackFrame = 0;
+    g_stackExpectedInstructionPointer = reinterpret_cast<uint64_t>(&stackTarget);
+    g_stackRedirectAddress = reinterpret_cast<uint64_t>(&stackRedirectTarget);
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    CHECK(sigilhook_create_jit_callback(
+        "int", "int,int,int,int,int", "cdecl", stackRedirectCallback, nullptr, &jit, &callbackAddress) == SIGILHOOK_OK);
+    sigilhook_handle hook{};
+    CHECK(sigilhook_create_detour(
+        reinterpret_cast<uint64_t>(&stackTarget), callbackAddress, &hook, nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_bind_detour_to_jit(hook, jit, nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_hook(hook) == SIGILHOOK_OK);
+    CHECK(stackTarget(1, 2, 3, 4, 5) == 105);
+    CHECK(g_stackTargetCalls == 0);
+    CHECK(g_stackRedirectCalls == 1);
+    CHECK(g_badStackFrame == 0);
+    CHECK(sigilhook_unhook(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    return 0;
+}
+
 } // namespace
 
 int main() {
     CHECK(testBasicJitDetour() == 0);
+    CHECK(testStackArgumentRedirect() == 0);
+    CHECK(testAssemblyHelpers() == 0);
     CHECK(testStandardConventions() == 0);
     CHECK(testInvalidMappings() == 0);
     CHECK(testUsercall() == 0);

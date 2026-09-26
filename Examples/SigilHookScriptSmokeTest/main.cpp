@@ -290,8 +290,8 @@ int main() {
     CHECK(g_usercallTargetCalls == 1);
     g_usercallTargetCalls = 0;
 
-    CHECK(target(1) == 77);
-    CHECK(g_targetCalls == 0);
+    CHECK(target(1) == 42);
+    CHECK(g_targetCalls == 1);
     CHECK(reinterpret_cast<StdCallFn>(&stdcallTarget)(7, 9) == 402);
     CHECK(reinterpret_cast<FastCallFn>(&fastcallTarget)(7, 9) == 402);
     CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);
