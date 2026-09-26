@@ -338,3 +338,7 @@ out/
 _build-*/
 _install-*/
 _diag-*/
+
+# AsmJit keeps its x86 backend in generated source files required by CMake.
+!asmjit/src/asmjit/x86/
+!asmjit/src/asmjit/x86/**

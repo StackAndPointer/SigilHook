@@ -31,10 +31,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
-      - name: Generate AsmJit x86 sources
-        working-directory: asmjit/tools
-        run: node tablegen-x86.js
-
       - name: Configure CMake
         run: >
           cmake -S . -B "${{ env.BUILD_DIR }}"
