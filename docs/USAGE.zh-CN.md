@@ -70,16 +70,18 @@ _build-x64/SigilHookImport.lib
 
 仓库工作流还会使用 Visual Studio 分别构建 MSVC 和 clang-cl 的
 `Win32`、`x64` 版本。手动工作流接受可选的 `release_tag`；提供该参数时会发布以下
-四个 Windows 压缩包：
+四个 Windows 压缩包和两个 GCC Linux 压缩包：
 
 ```text
 SigilHook-msvc-x86.zip
 SigilHook-msvc-x64.zip
 SigilHook-clang-cl-x86.zip
 SigilHook-clang-cl-x64.zip
+SigilHook-gcc-x86.zip
+SigilHook-gcc-x64.zip
 ```
 
-每个压缩包都包含可直接部署的目录结构，DLL 旁边同时提供标准 `.ash` 头文件：
+Windows 压缩包包含可直接部署的目录结构，DLL 旁边同时提供标准 `.ash` 头文件：
 
 ```text
 SigilHook.dll
@@ -87,7 +89,16 @@ SigilHook/
   SigilHook.ash
 ```
 
-GCC x86/x64 Job 只负责 Linux 源码构建和测试，不生成 Windows DLL 发布包。
+GCC x86/x64 Job 使用 Linux 构建和测试。它们不是 Windows DLL 发布包；
+对应的 GCC 发布包包含 Linux 静态库、C 头文件和标准 AngelScript 头文件：
+
+```text
+libSigilHook.a
+include/
+  sigilhook.h
+SigilHook/
+  SigilHook.ash
+```
 
 ## 3. 部署与加载
 

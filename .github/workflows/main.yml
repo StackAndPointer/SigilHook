@@ -112,6 +112,36 @@ jobs:
         if: ${{ matrix.platform == 'gcc' }}
         run: cmake --build "${{ matrix.build_dir }}" --parallel
 
+      - name: Package GCC library
+        if: ${{ matrix.platform == 'gcc' }}
+        run: |
+          set -euo pipefail
+          package_name="SigilHook-gcc-${{ matrix.bitness }}"
+          package_root="${RUNNER_TEMP}/${package_name}"
+          mkdir -p "${package_root}/SigilHook" "${package_root}/include"
+          cp "${{ matrix.build_dir }}/libSigilHook.a" "${package_root}/libSigilHook.a"
+          cp scripts/SigilHook.ash "${package_root}/SigilHook/SigilHook.ash"
+          cp include/sigilhook.h "${package_root}/include/sigilhook.h"
+          cat > "${package_root}/README.txt" <<'EOF'
+          SigilHook GCC Linux development package
+
+          This package contains the static Linux library and headers used by
+          the GCC build. It is not a Windows injectable DLL package.
+          EOF
+          (
+            cd "${package_root}"
+            zip -r "${RUNNER_TEMP}/${package_name}.zip" .
+          )
+
+      - name: Upload GCC package
+        if: ${{ matrix.platform == 'gcc' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gcc-${{ matrix.bitness }}
+          path: ${{ runner.temp }}/SigilHook-gcc-${{ matrix.bitness }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Build Windows
         if: ${{ matrix.platform == 'windows' }}
         run: >
@@ -174,7 +204,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -name '*.zip' -print | sort)
-          test "${#assets[@]}" -eq 4
+          test "${#assets[@]}" -eq 6
           gh release create "$RELEASE_TAG" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \

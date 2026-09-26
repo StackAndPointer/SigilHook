@@ -70,17 +70,20 @@ _build-x64/SigilHookImport.lib
 
 The repository workflow also builds MSVC and clang-cl with Visual Studio for
 both `Win32` and `x64`. The manual workflow accepts an optional `release_tag`.
-When supplied, it publishes these four Windows packages:
+When supplied, it publishes four Windows packages and two GCC Linux packages:
 
 ```text
 SigilHook-msvc-x86.zip
 SigilHook-msvc-x64.zip
 SigilHook-clang-cl-x86.zip
 SigilHook-clang-cl-x64.zip
+SigilHook-gcc-x86.zip
+SigilHook-gcc-x64.zip
 ```
 
-Every package contains the deployable layout below. The `.ash` file is shipped
-beside the DLL so a new deployment has the standard declarations immediately:
+Each Windows package contains the deployable layout below. The `.ash` file is
+shipped beside the DLL so a new deployment has the standard declarations
+immediately:
 
 ```text
 SigilHook.dll
@@ -89,7 +92,16 @@ SigilHook/
 ```
 
 The GCC x86/x64 jobs are Linux source-build and test checks. They are not
-Windows DLL release packages.
+Windows DLL release packages. Their release packages contain the Linux static
+library, C header, and standard AngelScript header:
+
+```text
+libSigilHook.a
+include/
+  sigilhook.h
+SigilHook/
+  SigilHook.ash
+```
 
 ## 3. Deployment and loading
 

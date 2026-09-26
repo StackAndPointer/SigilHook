@@ -271,13 +271,15 @@ Omit `-T ClangCL` to use the regular MSVC toolset with the same generator and
 architecture flags.
 
 The manual GitHub Actions workflow accepts an optional `release_tag`. When it
-is set, it publishes four Windows packages:
+is set, it publishes four Windows packages and two GCC Linux packages:
 
 ```text
 SigilHook-msvc-x86.zip
 SigilHook-msvc-x64.zip
 SigilHook-clang-cl-x86.zip
 SigilHook-clang-cl-x64.zip
+SigilHook-gcc-x86.zip
+SigilHook-gcc-x64.zip
 ```
 
 Each package contains the deployable runtime layout:
@@ -288,8 +290,16 @@ SigilHook/
   SigilHook.ash
 ```
 
-The GCC jobs provide Linux build and test coverage; they do not produce
-Windows DLL release packages.
+The GCC packages provide Linux static-library development artifacts; they do
+not contain Windows injectable DLLs:
+
+```text
+libSigilHook.a
+include/
+  sigilhook.h
+SigilHook/
+  SigilHook.ash
+```
 
 ## License and acknowledgements
 
