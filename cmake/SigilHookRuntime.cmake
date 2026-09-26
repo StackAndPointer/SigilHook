@@ -73,6 +73,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
         if(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST)
             set(SIGILHOOK_SCRIPT_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHookScriptSmokeTestScripts")
             file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}")
+            configure_file(${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash" COPYONLY)
             configure_file(${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/scripts/10-test.as "${SIGILHOOK_SCRIPT_TEST_DIR}/10-test.as" COPYONLY)
             add_executable(SigilHookScriptSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/main.cpp
