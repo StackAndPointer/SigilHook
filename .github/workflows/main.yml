@@ -1,24 +1,70 @@
-name: GCC x86/x64
+name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional GitHub Release tag, for example v0.1.0"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    name: GCC ${{ matrix.bitness }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - bitness: x86
+          - name: GCC x86
+            os: ubuntu-latest
+            platform: gcc
+            bitness: x86
+            build_dir: build-gcc-x86
             cmake_flags: -DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32
-          - bitness: x64
+          - name: GCC x64
+            os: ubuntu-latest
+            platform: gcc
+            bitness: x64
+            build_dir: build-gcc-x64
             cmake_flags: -DCMAKE_C_FLAGS=-m64 -DCMAKE_CXX_FLAGS=-m64
-
-    env:
-      BUILD_DIR: ${{ github.workspace }}/build-gcc-${{ matrix.bitness }}
+          - name: MSVC x86
+            os: windows-latest
+            platform: windows
+            compiler: msvc
+            bitness: x86
+            build_dir: build-msvc-x86
+            generator: Visual Studio 17 2022
+            arch: Win32
+          - name: MSVC x64
+            os: windows-latest
+            platform: windows
+            compiler: msvc
+            bitness: x64
+            build_dir: build-msvc-x64
+            generator: Visual Studio 17 2022
+            arch: x64
+          - name: clang-cl x86
+            os: windows-latest
+            platform: windows
+            compiler: clang-cl
+            bitness: x86
+            build_dir: build-clang-cl-x86
+            generator: Visual Studio 17 2022
+            arch: Win32
+          - name: clang-cl x64
+            os: windows-latest
+            platform: windows
+            compiler: clang-cl
+            bitness: x64
+            build_dir: build-clang-cl-x64
+            generator: Visual Studio 17 2022
+            arch: x64
 
     steps:
       - uses: actions/checkout@v5
@@ -26,19 +72,111 @@ jobs:
           submodules: recursive
 
       - name: Install 32-bit GCC support
-        if: ${{ matrix.bitness == 'x86' }}
+        if: ${{ matrix.platform == 'gcc' && matrix.bitness == 'x86' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
-      - name: Configure CMake
+      - name: Configure GCC
+        if: ${{ matrix.platform == 'gcc' }}
         run: >
-          cmake -S . -B "${{ env.BUILD_DIR }}"
+          cmake -S . -B "${{ matrix.build_dir }}"
           -DSIGILHOOK_BUILD_DLL=ON
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=gcc
           -DCMAKE_CXX_COMPILER=g++
           ${{ matrix.cmake_flags }}
 
-      - name: Build
-        run: cmake --build "${{ env.BUILD_DIR }}" --parallel
+      - name: Configure MSVC
+        if: ${{ matrix.compiler == 'msvc' }}
+        run: >
+          cmake -S . -B "${{ matrix.build_dir }}"
+          -G "${{ matrix.generator }}"
+          -A "${{ matrix.arch }}"
+          -DSIGILHOOK_BUILD_DLL=ON
+          -DSIGILHOOK_BUILD_INJECTOR_DLL=ON
+          -DSIGILHOOK_BUILD_STATIC_RUNTIME=ON
+
+      - name: Configure clang-cl
+        if: ${{ matrix.compiler == 'clang-cl' }}
+        run: >
+          cmake -S . -B "${{ matrix.build_dir }}"
+          -G "${{ matrix.generator }}"
+          -T ClangCL
+          -A "${{ matrix.arch }}"
+          -DSIGILHOOK_BUILD_DLL=ON
+          -DSIGILHOOK_BUILD_INJECTOR_DLL=ON
+          -DSIGILHOOK_BUILD_STATIC_RUNTIME=ON
+
+      - name: Build GCC
+        if: ${{ matrix.platform == 'gcc' }}
+        run: cmake --build "${{ matrix.build_dir }}" --parallel
+
+      - name: Build Windows
+        if: ${{ matrix.platform == 'windows' }}
+        run: >
+          cmake --build "${{ matrix.build_dir }}"
+          --config Release
+          --parallel
+          --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest
+
+      - name: Test GCC
+        if: ${{ matrix.platform == 'gcc' }}
+        run: ctest --test-dir "${{ matrix.build_dir }}" --output-on-failure
+
+      - name: Test Windows
+        if: ${{ matrix.platform == 'windows' }}
+        run: ctest --test-dir "${{ matrix.build_dir }}" -C Release --output-on-failure
+
+      - name: Package Windows DLL
+        if: ${{ matrix.platform == 'windows' }}
+        shell: pwsh
+        run: |
+          $packageName = "SigilHook-${{ matrix.compiler }}-${{ matrix.bitness }}"
+          $packageRoot = Join-Path $env:RUNNER_TEMP $packageName
+          $scriptRoot = Join-Path $packageRoot "SigilHook"
+          New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+          Copy-Item -LiteralPath "${{ matrix.build_dir }}\Release\SigilHook.dll" `
+            -Destination (Join-Path $packageRoot "SigilHook.dll")
+          Copy-Item -LiteralPath "${{ matrix.build_dir }}\SigilHook\SigilHook.ash" `
+            -Destination (Join-Path $scriptRoot "SigilHook.ash")
+          Compress-Archive -Path (Join-Path $packageRoot "*") `
+            -DestinationPath (Join-Path $env:RUNNER_TEMP "$packageName.zip") -Force
+
+      - name: Upload Windows package
+        if: ${{ matrix.platform == 'windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.compiler }}-${{ matrix.bitness }}
+          path: ${{ runner.temp }}/SigilHook-${{ matrix.compiler }}-${{ matrix.bitness }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: ${{ inputs.release_tag != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -name '*.zip' -print | sort)
+          test "${#assets[@]}" -eq 4
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --generate-notes
