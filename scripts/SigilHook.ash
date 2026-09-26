@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 // SigilHook standard AngelScript helpers.
 // Include this file from .as scripts with: #include "SigilHook.ash"
+#pragma once
 
 const uint64 SH_INVALID_HANDLE = 0;
 

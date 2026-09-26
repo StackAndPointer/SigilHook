@@ -1,8 +1,22 @@
 // Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "SigilHook.ash"
+#include "include/Nested.ash"
 
 uint64 g_hook = SH_INVALID_HANDLE;
+uint64 g_crossFileShared = 0;
+
+void setCrossFileShared(uint64 value) {
+    g_crossFileShared = value;
+}
+
+uint64 getCrossFileShared() {
+    return g_crossFileShared;
+}
+
+uint64 crossFileFunction(uint64 value) {
+    return value ^ SIGILHOOK_TEST_NESTED_VALUE;
+}
 uint64 g_cdeclHook = SH_INVALID_HANDLE;
 uint64 g_stdcallHook = SH_INVALID_HANDLE;
 uint64 g_fastcallHook = SH_INVALID_HANDLE;
@@ -283,7 +297,7 @@ void verify() {
     verifyHelperApi();
 }
 
-void unload() {
+void cleanupTestHooks() {
     if (shIsValidHook(g_hook)) { shDestroyHook(g_hook); g_hook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_cdeclHook)) { shDestroyHook(g_cdeclHook); g_cdeclHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_stdcallHook)) { shDestroyHook(g_stdcallHook); g_stdcallHook = SH_INVALID_HANDLE; }

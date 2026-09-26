@@ -1,10 +1,21 @@
 // Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "SigilHook.ash"
+#include "include/ModuleShared.ash"
 
 void onStatusJit() {
     shSetReturn(shArg(0) + 1);
     shSkipOriginal();
+}
+
+void verifyCrossFileSharing() {
+    const uint64 expected = SIGILHOOK_TEST_HEADER_VALUE ^ crossFileFunction(0x1234);
+    setCrossFileShared(expected);
+    if (getCrossFileShared() != expected || moduleHeaderValue(0x1234) != expected) {
+        shSetSharedU64("scriptBad", 5001);
+        return;
+    }
+    shSetSharedU64("crossFileResult", expected);
 }
 
 void statusEntry() {
@@ -163,7 +174,7 @@ void testStatusAssemblyHelpers() {
         shAsmMovEspAndJmpFree(snippet) != SH_OK) { shSetSharedU64("scriptBad", 4054); return; }
 }
 
-void main() {
+void verifyStatus() {
     shStatusString(SH_OK);
     testStatusDetour();
     if (shSharedU64("scriptBad") != 0) return;
