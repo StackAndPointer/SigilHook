@@ -1,3 +1,6 @@
+// Copyright (c) 2026 StackAndPointer
+// SPDX-License-Identifier: MIT
+
 #include <Catch.hpp>
 
 #include "sigilhook/PE/EatHook.hpp"
@@ -62,8 +65,8 @@ int __stdcall hkEatMessageBox(HWND, LPCTSTR, LPCTSTR, UINT) {
 	return 1;
 }
 
-// Disable test in CI that require GUI interactions
-#ifndef SIGILHOOK_CI
+// Desktop interaction tests are opt-in through SIGILHOOK_BUILD_INTERACTIVE_TESTS.
+#ifndef SIGILHOOK_SKIP_INTERACTIVE_TESTS
 
 TEST_CASE("Hook User32.MessageBoxA using module name", "[EatHook]") {
 	SIGILHOOK::StackCanary canary;

@@ -45,14 +45,14 @@ void main() {}
 void unload() {}
 ```
 
-A missing `main.as`, missing `void main()`, duplicate entry, entry in another file, or optional `void unload()` outside `main.as` is a script-load error. The module is built once and `main()` is executed once after the complete application compiles; `unload()` runs once during runtime shutdown.
+A missing `main.as`, missing `void main()`, duplicate entry, entry in another file, or optional `void unload()` outside `main.as` is a script-load error. The module is built once and `main()` is executed once after the complete application compiles; `unload()` runs once during runtime shutdown. If `main()` fails, the runtime calls the optional `unload()` as a best-effort rollback, destroys script bindings, and discards the module.
 
 Hook callbacks can modify arguments, call `callOriginal()`, skip the original with
 `skipOriginal()`, and override the final result with `setReturnValue(value)`. The
 standard `shReturnEarly(value)` helper combines a return override with skipping
 the original function.
 
-The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock.
+The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop()` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock. This is a required unload protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; `sigilhook_runtime_stop_with_timeout()` can select another timeout. If stopping returns `SIGILHOOK_ERROR_BUSY`, the hooks and engine are still alive, so do not unload the DLL; retry or terminate the host process. Process termination does not require runtime teardown.
 
 ## Standard helper API
 
@@ -193,7 +193,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
   and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x00020005`. All addresses cross the ABI as `uint64_t`.
+The current API version is `0x00020006`. All addresses cross the ABI as `uint64_t`.
 Hook construction returns status codes instead of throwing C++ exceptions across
 the boundary.
 

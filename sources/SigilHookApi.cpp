@@ -388,7 +388,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020005;
+    return 0x00020006;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {

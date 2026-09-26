@@ -49,7 +49,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         break;
     }
     case DLL_PROCESS_DETACH:
-        // Runtime shutdown requires synchronization and must not run under the loader lock.
+        // Do not stop the runtime under the loader lock. Hosts must call
+        // sigilhook_runtime_stop() successfully before FreeLibrary.
         break;
     default:
         break;

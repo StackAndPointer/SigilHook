@@ -48,7 +48,7 @@ void verifyHelperApi() {
     g_helperStep = 201;
     if (shApiVersion() < 0x00020004 ||
         shBuildMode() != uint8(shSharedU64("expectedBuildMode"))) { failHelperTest(); return; }
-    if (shApiVersion() < 0x00020005) { failHelperTest(); return; }
+    if (shApiVersion() < 0x00020006) { failHelperTest(); return; }
 
     g_helperStep = 202;
     if (shIsValidHook(SH_INVALID_HANDLE) || !shIsValidHook(1)) { failHelperTest(); return; }

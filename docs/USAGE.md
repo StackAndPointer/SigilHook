@@ -102,7 +102,7 @@ sigilhook_runtime_load_directory(L"<script directory>");
 sigilhook_runtime_stop();
 ```
 
-Call `sigilhook_runtime_stop()` before unloading the DLL. Runtime teardown must not run from `DllMain` while the Windows loader lock is active. `sigilhook_runtime_stop()` runs `void unload()`, destroys script hooks and JIT bindings, waits for active callbacks, and releases the engine.
+Call `sigilhook_runtime_stop()` before unloading the DLL. Runtime teardown must not run from `DllMain` while the Windows loader lock is active. This is a required protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; use `sigilhook_runtime_stop_with_timeout(timeout_ms)` to choose another timeout. Stopping first rejects new script callbacks, waits for active callbacks, and asks active AngelScript contexts to abort if the timeout is half elapsed. If it returns `SIGILHOOK_ERROR_BUSY`, a callback did not exit in time and the hooks, module, and engine remain alive; do not unload the DLL, retry the stop, or terminate the host process. Process termination does not require runtime teardown.
 
 The DLL itself is not an injector. The host still needs a process-injection mechanism, and the injected DLL must match the target process architecture.
 
@@ -164,7 +164,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-The current C API version is `0x00020005`.
+The current C API version is `0x00020006`.
 
 Status codes are:
 

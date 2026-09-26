@@ -679,7 +679,14 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 1);
 	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_overrideReturn)), 0);
 	cc.mov(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_redirect)), 0);
-	cc.mov(asmjit::x86::qword_ptr(retStruct, offsetof(ReturnValue, m_redirectAddress)), 0);
+	if (arch == asmjit::Arch::kX64) {
+		cc.mov(asmjit::x86::qword_ptr(retStruct, offsetof(ReturnValue, m_redirectAddress)), 0);
+	} else {
+		// x86 has no 64-bit GPR store encoding. The redirect address is a
+		// pointer-sized value on this path, so clear both halves explicitly.
+		cc.mov(asmjit::x86::dword_ptr(retStruct, offsetof(ReturnValue, m_redirectAddress)), 0);
+		cc.mov(asmjit::x86::dword_ptr(retStruct, offsetof(ReturnValue, m_redirectAddress) + sizeof(uint32_t)), 0);
+	}
 
 	asmjit::InvokeNode* invokeNode = nullptr;
 	cc.invoke(

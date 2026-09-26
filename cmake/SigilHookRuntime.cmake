@@ -5,6 +5,8 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
     option(SIGILHOOK_BUILD_INJECTOR_DLL "Build the injectable SigilHook.dll runtime" ON)
     option(SIGILHOOK_BUILD_API_SMOKE_TEST "Build the exported C API smoke test" ON)
     option(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST "Build the AngelScript runtime smoke test" ON)
+    set(SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS 5000 CACHE STRING
+        "Default timeout for stopping the AngelScript runtime")
 
     set(SIGILHOOK_RUNTIME_SCRIPT_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHook")
     file(MAKE_DIRECTORY "${SIGILHOOK_RUNTIME_SCRIPT_DIR}")
@@ -23,7 +25,10 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             ARCHIVE_OUTPUT_NAME SigilHookImport
         )
         target_compile_features(SigilHookDll PRIVATE cxx_std_20)
-        target_compile_definitions(SigilHookDll PRIVATE SIGILHOOK_BUILDING_DLL=1)
+        target_compile_definitions(SigilHookDll PRIVATE
+            SIGILHOOK_BUILDING_DLL=1
+            SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS=${SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS}
+        )
         target_include_directories(SigilHookDll PRIVATE
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/angelscript/include

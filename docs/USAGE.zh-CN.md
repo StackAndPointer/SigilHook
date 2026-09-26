@@ -102,7 +102,7 @@ sigilhook_runtime_load_directory(L"<script directory>");
 sigilhook_runtime_stop();
 ```
 
-卸载 DLL 前必须调用 `sigilhook_runtime_stop()`。运行时清理不能在 Windows loader lock 下的 `DllMain` 中执行。`sigilhook_runtime_stop()` 会执行 `void unload()`，销毁脚本 Hook 和 JIT 绑定，等待活动回调结束，再释放 AngelScript 引擎。
+卸载 DLL 前必须调用 `sigilhook_runtime_stop()`。这是强制协议：运行时启动期间绝不能直接调用 `FreeLibrary`。运行时清理不能在 Windows loader lock 下的 `DllMain` 中执行。默认停止超时为 5000 毫秒，也可以使用 `sigilhook_runtime_stop_with_timeout(timeout_ms)` 指定超时。停止时会先拒绝新的脚本回调，等待活动回调，并在超时过半时请求 AngelScript context 中止。如果返回 `SIGILHOOK_ERROR_BUSY`，说明仍有回调未退出，Hook、模块和引擎仍然有效；此时不要卸载 DLL，应重试停止或终止宿主进程。进程终止不需要运行时清理。
 
 DLL 本身不是注入器；仍需要宿主自己的注入机制，并且 DLL 必须与目标进程位数一致。
 
@@ -164,7 +164,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-当前 C API 版本是 `0x00020005`。
+当前 C API 版本是 `0x00020006`。
 
 状态码：
 

@@ -22,7 +22,8 @@ option(SIGILHOOK_BUILD_SHARED_ASMTK "Build asmtk as shared libary" OFF)
 option(SIGILHOOK_BUILD_SHARED_ASMJIT "Build asmjit as shared libary" ${SIGILHOOK_BUILD_SHARED_ASMTK})
 option(SIGILHOOK_BUILD_SHARED_ZYDIS "Build zydis as shared libary" OFF)
 
-option(SIGILHOOK_USE_EXTERNAL_ASMJIT "Use external asmjit libary" ${SIGILHOOK_USE_EXTERNAL_ASMTK})
+option(SIGILHOOK_USE_EXTERNAL_ASMTK "Use an external AsmTK library" OFF)
+option(SIGILHOOK_USE_EXTERNAL_ASMJIT "Use an external AsmJit library" ${SIGILHOOK_USE_EXTERNAL_ASMTK})
 option(SIGILHOOK_USE_EXTERNAL_ANGELSCRIPT "Use external AngelScript library" OFF)
 option(SIGILHOOK_USE_EXTERNAL_ZYDIS "Use external zydis libary" OFF)
 
@@ -43,6 +44,8 @@ endif()
 option(SIGILHOOK_FEATURE_DETOURS "Implement detour functionality" ON)
 option(SIGILHOOK_FEATURE_INLINENTD "Support inline hooks without specifying typedefs by generating callback stubs at runtime with AsmJit" ON)
 option(SIGILHOOK_FEATURE_VIRTUALS "Implement all virtual table hooking functionality" ON)
+option(SIGILHOOK_BUILD_INTERACTIVE_TESTS
+	"Build native tests that require an interactive desktop" OFF)
 
 #
 # ASMTK
@@ -61,6 +64,9 @@ endfunction()
 if(SIGILHOOK_FEATURE_DETOURS AND NOT SIGILHOOK_USE_EXTERNAL_ASMTK)
 	if(NOT SIGILHOOK_USE_EXTERNAL_ASMJIT)
 	    set(ASMJIT_DIR "${PROJECT_SOURCE_DIR}/asmjit")
+		set(ASMJIT_EXTERNAL OFF)
+	else()
+		set(ASMJIT_EXTERNAL ON)
     endif()
 	# asmjit and asmtk do not use `option`
 	if(SIGILHOOK_BUILD_SHARED_ASMTK)
@@ -156,9 +162,9 @@ else()
 			${PROJECT_SOURCE_DIR}/UnitTests/TestUtils.cpp
 	)
 
-	# https://docs.github.com/en/actions/reference/workflows-and-actions/variables
-	if("$ENV{CI}" STREQUAL "true")
-		target_compile_definitions(${PROJECT_NAME} PRIVATE SIGILHOOK_CI)
+	# Interactive desktop tests are opt-in. CI also skips them explicitly.
+	if("$ENV{CI}" STREQUAL "true" OR NOT SIGILHOOK_BUILD_INTERACTIVE_TESTS)
+		target_compile_definitions(${PROJECT_NAME} PRIVATE SIGILHOOK_SKIP_INTERACTIVE_TESTS)
 	endif()
 endif()
 
@@ -282,11 +288,10 @@ install(FILES ${PROJECT_SOURCE_DIR}/sigilhook/ZydisDisassembler.hpp DESTINATION 
 
 function(link_asmjit)
     if (SIGILHOOK_USE_EXTERNAL_ASMJIT)
-        find_library(ASMJIT_LIBRARY NAMES asmjit)
-        find_path(ASMJIT_INCLUDE_DIR NAMES asmjit/asmjit.h)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${ASMJIT_LIBRARY})
-        target_include_directories(${PROJECT_NAME} PUBLIC ${ASMJIT_INCLUDE_DIR})
-		find_package(asmjit REQUIRED)
+		find_package(asmjit CONFIG REQUIRED)
+		if(NOT TARGET asmjit::asmjit)
+			message(FATAL_ERROR "External AsmJit package does not provide asmjit::asmjit")
+		endif()
         target_link_libraries(${PROJECT_NAME} PRIVATE asmjit::asmjit)
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE $<BUILD_INTERFACE:asmjit>)
@@ -299,11 +304,10 @@ if(SIGILHOOK_FEATURE_DETOURS)
     link_asmjit()
 
     if (SIGILHOOK_USE_EXTERNAL_ASMTK)
-        find_library(ASMTK_LIBRARY NAMES asmtk)
-        find_path(ASMTK_INCLUDE_DIR NAMES asmtk/asmtk.h)
-        target_link_libraries(${PROJECT_NAME} PUBLIC ${ASMTK_LIBRARY})
-        target_include_directories(${PROJECT_NAME} PUBLIC ${ASMTK_INCLUDE_DIR})
-		find_package(asmtk REQUIRED)
+		find_package(asmtk CONFIG REQUIRED)
+		if(NOT TARGET asmjit::asmtk)
+			message(FATAL_ERROR "External AsmTK package does not provide asmjit::asmtk")
+		endif()
         target_link_libraries(${PROJECT_NAME} PRIVATE asmjit::asmtk)
     else()
         target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:asmtk>)
@@ -424,6 +428,10 @@ if(NOT SIGILHOOK_BUILD_DLL)
 		${PROJECT_SOURCE_DIR}/MainTests.cpp
 		${PROJECT_SOURCE_DIR}/UnitTests/${SIGILHOOK_OS}/TestDisassembler.cpp
 		${PROJECT_SOURCE_DIR}/UnitTests/${SIGILHOOK_OS}/TestMemProtector.cpp)
+
+	enable_testing()
+	add_test(NAME SigilHookCoreTests COMMAND ${PROJECT_NAME})
+	set_tests_properties(SigilHookCoreTests PROPERTIES TIMEOUT 60)
 endif()
 
 
