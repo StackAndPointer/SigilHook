@@ -8,6 +8,10 @@ that loads scripts from a directory beside the DLL.
 
 ## Script layout
 
+The runtime intentionally compiles all application `.as` files into one module. This gives a familiar C/C++-style authoring experience: split source files can call global functions and modify shared globals directly, while `.ash` files provide shared declarations. Native AngelScript modules remain isolated: cross-module calls require `import ... from "Module"` declarations plus `BindAllImportedFunctions()`, and raw global variables are not shared between modules. The smoke test covers this native Provider/Consumer model separately without changing the runtime loader.
+
+The repository keeps only neutral test scripts and standard library headers. Game-specific hook scripts are deployment content and are not retained here.
+
 Place scripts in:
 
 ```text
@@ -111,8 +115,8 @@ The standard helpers include equivalents for the reference HookAsm API:
 - `shAsmRet`, `shAsmRetFree`, `shAsmMovEspAndJmp`, and
   `shAsmMovEspAndJmpFree` create and release executable snippets
 
-The stack-jump helper moves `ESP` on x86 and `RSP` on x64 before jumping to
-the target. Snippet addresses must be released with their matching `Free` helper.
+The stack-jump helper moves `ESP` on x86 and `RSP` on x64 before jumping to the
+target. Snippet addresses must be released with their matching `Free` helper.
 
 Reference-project hook entry points map as follows: `HookDisAsm` maps to the
 disassembly helpers, `HookBegin`/`HookStop` to `shHookScript`/`shUnhook`,
