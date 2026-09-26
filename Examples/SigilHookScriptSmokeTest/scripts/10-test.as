@@ -9,6 +9,7 @@ uint64 g_fastcallHook = SH_INVALID_HANDLE;
 uint64 g_thiscallHook = SH_INVALID_HANDLE;
 uint64 g_vectorcallHook = SH_INVALID_HANDLE;
 uint64 g_usercallHook = SH_INVALID_HANDLE;
+uint64 g_pointerHook = SH_INVALID_HANDLE;
 uint64 g_nativeHook = SH_INVALID_HANDLE;
 uint64 g_breakpointHook = SH_INVALID_HANDLE;
 uint64 g_hardwareHook = SH_INVALID_HANDLE;
@@ -169,6 +170,12 @@ void onUsercall() {
     }
 }
 
+void onPointerUsercall() {
+    if (shArg(0) != shSharedU64("pointerExpected")) { failHelperTest(); return; }
+    shSetSharedU64("pointerScriptCallbacks", shSharedU64("pointerScriptCallbacks") + 1);
+    shKeepOriginal();
+}
+
 void verify() {
     g_helperStep = 100;
     g_hook = shHookScript(shSharedU64("target"), "void onTarget()", "int:int");
@@ -224,6 +231,25 @@ void verify() {
         "unsigned int:unsigned int,unsigned int,unsigned int", mapping);
     if (!shIsValidHook(g_usercallHook)) { failHelperTest(); return; }
 
+    const string pointerMapping = shBuildMode() == SH_MODE_X64
+        ? "usercall:ret=rax;arg0=rcx"
+        : "usercall:ret=eax;arg0=ecx;cleanup=8";
+    const string pointerHookMapping = shBuildMode() == SH_MODE_X64
+        ? "usercall:ret=none;arg0=rcx"
+        : "usercall:ret=none;arg0=ecx;cleanup=8";
+    array<uint64> pointerArguments(1);
+    pointerArguments[0] = shSharedU64("pointerExpected");
+    uint64 pointerResult = 0;
+    const uint8 pointerInvokeStatus = shCallUsercall(
+        shSharedU64("pointerTarget"), "void*", "void*", pointerMapping, pointerArguments, pointerResult);
+    if (pointerInvokeStatus != SH_OK || pointerResult != pointerArguments[0]) {
+        failHelperTest();
+        return;
+    }
+    g_pointerHook = shHookUsercall(
+        shSharedU64("pointerTarget"), "void onPointerUsercall()", "void:void*", pointerHookMapping);
+    if (!shIsValidHook(g_pointerHook)) { failHelperTest(); return; }
+
     g_helperStep = 107;
     g_nativeHook = shHookNative(shSharedU64("nativeTarget"), shSharedU64("nativeCallback"));
     if (!shIsValidHook(g_nativeHook)) { failHelperTest(); return; }
@@ -265,6 +291,7 @@ void unload() {
     if (shIsValidHook(g_thiscallHook)) { shDestroyHook(g_thiscallHook); g_thiscallHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_vectorcallHook)) { shDestroyHook(g_vectorcallHook); g_vectorcallHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_usercallHook)) { shDestroyHook(g_usercallHook); g_usercallHook = SH_INVALID_HANDLE; }
+    if (shIsValidHook(g_pointerHook)) { shDestroyHook(g_pointerHook); g_pointerHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_nativeHook)) { shDestroyHook(g_nativeHook); g_nativeHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_breakpointHook)) { shDestroyHook(g_breakpointHook); g_breakpointHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_hardwareHook)) { shDestroyHook(g_hardwareHook); g_hardwareHook = SH_INVALID_HANDLE; }

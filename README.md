@@ -117,6 +117,8 @@ Host-only runtime controls are intentionally not script globals.
 
 ## Usercall mappings
 
+Pointer types are sized for the target architecture rather than the host process: `void*`, any `T*` type, `intptr_t`, and `uintptr_t` are 4 bytes in an x86 build and 8 bytes in an x64 build. Pointer parameters and pointer return values are supported by both the C API and AngelScript usercall bindings; scripts may continue to declare `void*` directly.
+
 `shHookUsercall` describes a custom convention with this grammar:
 
 ```text

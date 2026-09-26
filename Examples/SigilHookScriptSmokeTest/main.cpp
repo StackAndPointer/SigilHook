@@ -38,6 +38,7 @@ namespace {
 volatile LONG g_targetCalls = 0;
 volatile LONG g_conventionTargetCalls = 0;
 volatile LONG g_usercallTargetCalls = 0;
+volatile LONG g_pointerTargetCalls = 0;
 volatile LONG g_nativeTargetCalls = 0;
 volatile LONG g_breakpointTargetCalls = 0;
 volatile LONG g_breakpointCallbackCalls = 0;
@@ -160,6 +161,7 @@ uint64_t memberFunctionAddress(T member) {
 }
 
 using UsercallCaller = unsigned int (SIGILHOOK_CALL *)(uintptr_t, unsigned int, unsigned int, unsigned int);
+using PointerUsercallCaller = void* (SIGILHOOK_CALL *)(uintptr_t, void*, unsigned int, unsigned int);
 
 struct Stub {
     uint64_t address = 0;
@@ -205,6 +207,22 @@ uint64_t makeUsercallTarget(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+uint64_t makePointerTarget(asmjit::JitRuntime& runtime) {
+    return makeStub(runtime, [](asmjit::x86::Assembler& a) {
+        const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
+        if (is64) {
+            a.mov(asmjit::x86::r10, reinterpret_cast<uint64_t>(&g_pointerTargetCalls));
+            a.add(asmjit::x86::byte_ptr(asmjit::x86::r10), 1);
+            a.mov(asmjit::x86::rax, asmjit::x86::rcx);
+        } else {
+            a.mov(asmjit::x86::edx, static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&g_pointerTargetCalls)));
+            a.add(asmjit::x86::byte_ptr(asmjit::x86::edx), 1);
+            a.mov(asmjit::x86::eax, asmjit::x86::ecx);
+        }
+        if (is64) a.ret(); else a.ret(8);
+    }).address;
+}
+
 uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -238,9 +256,13 @@ uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
 int main() {
     asmjit::JitRuntime runtime;
     const uint64_t usercallTarget = makeUsercallTarget(runtime);
+    const uint64_t pointerTarget = makePointerTarget(runtime);
+    const uint64_t pointerCaller = makeUsercallCaller(runtime);
     const uint64_t usercallCaller = makeUsercallCaller(runtime);
     const Stub memoryStub = makeStub(runtime, [](asmjit::x86::Assembler& a) { a.ret(); });
     CHECK(usercallTarget != 0);
+    CHECK(pointerTarget != 0);
+    CHECK(pointerCaller != 0);
     CHECK(usercallCaller != 0);
     CHECK(memoryStub.address != 0);
 
@@ -256,6 +278,10 @@ int main() {
     CHECK(sigilhook_runtime_set_shared_u64("thiscallTarget", memberFunctionAddress(&ThisCallTarget::target)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("vectorcallTarget", reinterpret_cast<uint64_t>(&vectorcallTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallTarget", usercallTarget) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("pointerTarget", pointerTarget) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("pointerScriptCallbacks", 0) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("pointerExpected", static_cast<uintptr_t>(
+        sizeof(void*) == 8 ? 0x123456789abcdu : 0x12345678u)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("scriptBad", 0) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("nativeTarget", reinterpret_cast<uint64_t>(&nativeTarget)) == SIGILHOOK_OK);
@@ -289,6 +315,16 @@ int main() {
     CHECK(scriptBad == 0);
     CHECK(g_usercallTargetCalls == 1);
     g_usercallTargetCalls = 0;
+    CHECK(g_pointerTargetCalls == 1);
+    g_pointerTargetCalls = 0;
+    const auto pointerFunction = reinterpret_cast<PointerUsercallCaller>(pointerCaller);
+    void* pointerValue = reinterpret_cast<void*>(static_cast<uintptr_t>(
+        sizeof(void*) == 8 ? 0x123456789abcdu : 0x12345678u));
+    CHECK(pointerFunction(pointerTarget, pointerValue, 0, 0) == pointerValue);
+    CHECK(g_pointerTargetCalls == 1);
+    uint64_t pointerScriptCallbacks = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("pointerScriptCallbacks", &pointerScriptCallbacks) == SIGILHOOK_OK);
+    CHECK(pointerScriptCallbacks == 1);
 
     CHECK(target(1) == 42);
     CHECK(g_targetCalls == 1);

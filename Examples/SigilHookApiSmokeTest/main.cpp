@@ -22,6 +22,10 @@ volatile int g_targetCalls = 0;
 volatile int g_badArgumentValues = 0;
 int g_usercallMode = 0;
 volatile int g_usercallTargetCalls = 0;
+volatile int g_pointerTargetCalls = 0;
+volatile int g_pointerCallbackCalls = 0;
+volatile int g_badPointerFrame = 0;
+void* g_expectedPointer = nullptr;
 int g_badUsercallFrame = 0;
 uint64_t g_redirectAddress = 0;
 uint64_t g_expectedInstructionPointer = 0;
@@ -164,7 +168,15 @@ void SIGILHOOK_CALL usercallCallback(sigilhook_call_frame* frame, void*) {
 
 void SIGILHOOK_CALL invalidMappingCallback(sigilhook_call_frame*, void*) {}
 
+void SIGILHOOK_CALL pointerCallback(sigilhook_call_frame* frame, void*) {
+    if (frame->argument_count != 1 || frame->arguments[0] != reinterpret_cast<uint64_t>(g_expectedPointer)) {
+        ++g_badPointerFrame;
+    }
+    ++g_pointerCallbackCalls;
+}
+
 using UsercallCaller = unsigned int (SIGILHOOK_CALL *)(uintptr_t, unsigned int, unsigned int, unsigned int);
+using PointerUsercallCaller = void* (SIGILHOOK_CALL *)(uintptr_t, void*, unsigned int, unsigned int);
 #if defined(_MSC_VER) && defined(_M_IX86)
 using StdCallFn = int (__stdcall *)(int, int);
 using FastCallFn = int (__fastcall *)(int, int);
@@ -217,6 +229,22 @@ uint64_t makeUsercallTarget(asmjit::JitRuntime& runtime) {
             a.add(asmjit::x86::byte_ptr(asmjit::x86::edx), 1);
             a.ret(8);
         }
+    }).address;
+}
+
+uint64_t makePointerTarget(asmjit::JitRuntime& runtime) {
+    return makeStub(runtime, [](asmjit::x86::Assembler& a) {
+        const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
+        if (is64) {
+            a.mov(asmjit::x86::r10, reinterpret_cast<uint64_t>(&g_pointerTargetCalls));
+            a.add(asmjit::x86::byte_ptr(asmjit::x86::r10), 1);
+            a.mov(asmjit::x86::rax, asmjit::x86::rcx);
+        } else {
+            a.mov(asmjit::x86::edx, static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&g_pointerTargetCalls)));
+            a.add(asmjit::x86::byte_ptr(asmjit::x86::edx), 1);
+            a.mov(asmjit::x86::eax, asmjit::x86::ecx);
+        }
+        if (is64) a.ret(); else a.ret(8);
     }).address;
 }
 
@@ -461,6 +489,50 @@ int testUsercall() {
     return 0;
 }
 
+int testPointerUsercall() {
+    asmjit::JitRuntime runtime;
+    const uint64_t targetAddress = makePointerTarget(runtime);
+    const uint64_t callerAddress = makeUsercallCaller(runtime);
+    CHECK(targetAddress != 0);
+    CHECK(callerAddress != 0);
+    const char* mapping = sigilhook_build_mode() == SIGILHOOK_MODE_X64
+        ? "usercall:ret=rax;arg0=rcx"
+        : "usercall:ret=eax;arg0=ecx;cleanup=8";
+    const char* pointerTypes[] = {"void*", "Board*", "intptr_t", "uintptr_t"};
+    const void* pointerValue = reinterpret_cast<const void*>(static_cast<uintptr_t>(
+        sigilhook_build_mode() == SIGILHOOK_MODE_X64 ? 0x123456789abcdu : 0x12345678u));
+    for (const char* pointerType : pointerTypes) {
+        const uint64_t arguments[] = {reinterpret_cast<uint64_t>(pointerValue)};
+        uint64_t result = 0;
+        CHECK(sigilhook_invoke_usercall(
+            targetAddress, pointerType, pointerType, mapping, arguments, 1, &result) == SIGILHOOK_OK);
+        CHECK(result == arguments[0]);
+    }
+
+    g_expectedPointer = const_cast<void*>(pointerValue);
+    g_pointerTargetCalls = 0;
+    g_pointerCallbackCalls = 0;
+    g_badPointerFrame = 0;
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    CHECK(sigilhook_create_jit_callback(
+        "void*", "void*", mapping, pointerCallback, nullptr, &jit, &callbackAddress) == SIGILHOOK_OK);
+    sigilhook_handle hook{};
+    CHECK(sigilhook_create_detour(targetAddress, callbackAddress, &hook, nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_bind_detour_to_jit(hook, jit, nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_hook(hook) == SIGILHOOK_OK);
+    const auto pointerFunction = reinterpret_cast<PointerUsercallCaller>(callerAddress);
+    CHECK(pointerFunction(targetAddress, const_cast<void*>(pointerValue), 0, 0) == pointerValue);
+    CHECK(g_pointerTargetCalls == 1);
+    CHECK(g_pointerCallbackCalls == 1);
+    CHECK(g_badPointerFrame == 0);
+
+    CHECK(sigilhook_unhook(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    return 0;
+}
+
 int testStackArgumentRedirect() {
     g_stackTargetCalls = 0;
     g_stackRedirectCalls = 0;
@@ -495,5 +567,6 @@ int main() {
     CHECK(testStandardConventions() == 0);
     CHECK(testInvalidMappings() == 0);
     CHECK(testUsercall() == 0);
+    CHECK(testPointerUsercall() == 0);
     return 0;
 }
