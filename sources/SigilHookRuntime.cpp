@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if defined(_WIN32)
@@ -81,40 +82,229 @@ std::string trim(const std::string& value) {
     return value.substr(first, last - first + 1);
 }
 
-std::string loadScriptSource(const fs::path& path, int depth, std::string& error) {
-    if (depth > 16) {
-        error = "include depth exceeds 16";
-        return {};
+struct ScriptSection {
+    std::string name;
+    std::string source;
+};
+
+struct IncludeLoadState {
+    fs::path root;
+    std::vector<fs::path> stack;
+    std::unordered_set<std::string> includedHeaders;
+    std::vector<ScriptSection>* sections = nullptr;
+    std::string error;
+};
+
+enum class SourceLineKind {
+    ordinary,
+    include,
+    invalidInclude
+};
+
+fs::path normalizedPath(const fs::path& path) {
+    std::error_code error;
+    const fs::path absolute = fs::absolute(path, error);
+    if (error) return path.lexically_normal();
+    const fs::path canonical = fs::weakly_canonical(absolute, error);
+    return error ? absolute.lexically_normal() : canonical;
+}
+
+bool extensionEquals(const fs::path& path, const std::string& expected) {
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    return extension == expected;
+}
+
+std::string sectionName(const fs::path& path, const fs::path& root) {
+    const fs::path relative = path.lexically_relative(root);
+    if (!relative.empty()) {
+        const auto first = relative.begin();
+        if (first != relative.end() && *first != "..") return relative.generic_string();
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        error = "cannot open " + path.string();
-        return {};
+    return path.generic_string();
+}
+
+std::string includeChain(const IncludeLoadState& state) {
+    std::string result;
+    for (const fs::path& path : state.stack) {
+        if (!result.empty()) result += " -> ";
+        result += sectionName(path, state.root);
     }
-    std::stringstream buffer;
-    buffer << input.rdbuf();
-    std::string source = buffer.str();
-    std::stringstream output;
-    std::istringstream lines(source);
-    std::string line;
-    while (std::getline(lines, line)) {
-        const std::string stripped = trim(line);
-        if (stripped.rfind("#include", 0) == 0) {
-            const auto quote = stripped.find('"');
-            const auto endQuote = stripped.find('"', quote == std::string::npos ? 0 : quote + 1);
-            if (quote == std::string::npos || endQuote == std::string::npos) {
-                error = "invalid include in " + path.string();
-                return {};
-            }
-            const fs::path includePath = path.parent_path() / stripped.substr(quote + 1, endQuote - quote - 1);
-            std::string included = loadScriptSource(includePath, depth + 1, error);
-            if (!error.empty()) return {};
-            output << included << '\n';
-        } else {
-            output << line << '\n';
+    return result;
+}
+
+void setIncludeError(IncludeLoadState& state, const fs::path& path, int line, const std::string& message) {
+    if (!state.error.empty()) return;
+    std::ostringstream output;
+    output << sectionName(path, state.root) << ':' << line << ": " << message;
+    const std::string chain = includeChain(state);
+    if (!chain.empty()) output << " (include chain: " << chain << ')';
+    state.error = output.str();
+}
+
+bool startsWithKeyword(const std::string& line, const char* keyword) {
+    size_t position = 0;
+    if (position >= line.size() || line[position++] != '#') return false;
+    while (position < line.size() && (line[position] == ' ' || line[position] == '\t')) ++position;
+    const size_t length = std::char_traits<char>::length(keyword);
+    if (line.compare(position, length, keyword) != 0) return false;
+    position += length;
+    if (position == line.size()) return true;
+    const unsigned char next = static_cast<unsigned char>(line[position]);
+    return !(std::isalnum(next) || next == '_');
+}
+
+SourceLineKind classifySourceLine(const std::string& stripped, std::string& includeTarget) {
+    if (!startsWithKeyword(stripped, "include")) return SourceLineKind::ordinary;
+    size_t position = 1;
+    while (position < stripped.size() && (stripped[position] == ' ' || stripped[position] == '\t')) ++position;
+    position += std::char_traits<char>::length("include");
+    while (position < stripped.size() && (stripped[position] == ' ' || stripped[position] == '\t')) ++position;
+    if (position >= stripped.size()) return SourceLineKind::invalidInclude;
+    const char delimiter = stripped[position];
+    const char closing = delimiter == '"' ? '"' : delimiter == '<' ? '>' : '\0';
+    if (closing == '\0') return SourceLineKind::invalidInclude;
+    const auto end = stripped.find(closing, position + 1);
+    if (end == std::string::npos || end == position + 1) return SourceLineKind::invalidInclude;
+    includeTarget = stripped.substr(position + 1, end - position - 1);
+    return SourceLineKind::include;
+}
+
+bool resolveInclude(const fs::path& source, const fs::path& root, const std::string& target, fs::path& resolved) {
+    std::vector<fs::path> candidates;
+    const fs::path requested(target);
+    if (requested.is_absolute()) {
+        candidates.push_back(requested);
+    } else {
+        candidates.push_back(source.parent_path() / requested);
+        candidates.push_back(root / requested);
+    }
+    for (const fs::path& candidate : candidates) {
+        std::error_code error;
+        if (fs::is_regular_file(candidate, error) && !error) {
+            resolved = normalizedPath(candidate);
+            return true;
         }
     }
-    return output.str();
+    return false;
+}
+
+bool processScriptFile(
+    const fs::path& requestedPath,
+    IncludeLoadState& state,
+    bool isHeader,
+    int depth,
+    std::string& output) {
+    const fs::path path = normalizedPath(requestedPath);
+    const std::string key = path.generic_string();
+    if (depth > 16) {
+        setIncludeError(state, path, 0, "include depth exceeds 16");
+        return false;
+    }
+    if (std::find(state.stack.begin(), state.stack.end(), path) != state.stack.end()) {
+        setIncludeError(state, path, 0, "cyclic include detected");
+        return false;
+    }
+    if (isHeader && state.includedHeaders.contains(key)) return true;
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        setIncludeError(state, path, 0, "cannot open script file");
+        return false;
+    }
+
+    state.stack.push_back(path);
+    std::string line;
+    int lineNumber = 0;
+    while (std::getline(input, line)) {
+        ++lineNumber;
+        const std::string stripped = trim(line);
+        if (startsWithKeyword(stripped, "pragma") &&
+            trim(stripped.substr(7)) == "once") {
+            output.push_back('\n');
+            continue;
+        }
+
+        std::string includeTarget;
+        const SourceLineKind kind = classifySourceLine(stripped, includeTarget);
+        if (kind == SourceLineKind::invalidInclude) {
+            setIncludeError(state, path, lineNumber, "invalid include directive");
+            state.stack.pop_back();
+            return false;
+        }
+        if (kind != SourceLineKind::include) {
+            output.append(line);
+            output.push_back('\n');
+            continue;
+        }
+
+        output.push_back('\n');
+        fs::path includePath;
+        if (!resolveInclude(path, state.root, includeTarget, includePath)) {
+            setIncludeError(state, path, lineNumber, "include not found: " + includeTarget);
+            state.stack.pop_back();
+            return false;
+        }
+        if (!extensionEquals(includePath, ".ash")) {
+            setIncludeError(state, path, lineNumber, "include target must use .ash: " + includeTarget);
+            state.stack.pop_back();
+            return false;
+        }
+        if (state.includedHeaders.contains(includePath.generic_string())) continue;
+        if (std::find(state.stack.begin(), state.stack.end(), includePath) != state.stack.end()) {
+            state.stack.push_back(includePath);
+            setIncludeError(state, includePath, 0, "cyclic include detected");
+            state.stack.pop_back();
+            state.stack.pop_back();
+            return false;
+        }
+
+        std::string headerSource;
+        if (!processScriptFile(includePath, state, true, depth + 1, headerSource)) {
+            state.stack.pop_back();
+            return false;
+        }
+        state.sections->push_back({sectionName(includePath, state.root), std::move(headerSource)});
+        state.includedHeaders.insert(includePath.generic_string());
+    }
+
+    state.stack.pop_back();
+    if (isHeader) state.includedHeaders.insert(key);
+    return true;
+}
+
+bool collectScriptFiles(const fs::path& directory, std::vector<fs::path>& scripts, std::string& error) {
+    std::error_code iteratorError;
+    fs::recursive_directory_iterator iterator(
+        directory, fs::directory_options::skip_permission_denied, iteratorError);
+    if (iteratorError) {
+        error = "cannot enumerate script directory: " + iteratorError.message();
+        return false;
+    }
+
+    const fs::recursive_directory_iterator end;
+    while (iterator != end) {
+        std::error_code entryError;
+        const fs::directory_entry& entry = *iterator;
+        if (entry.is_regular_file(entryError) && !entryError && extensionEquals(entry.path(), ".as")) {
+            scripts.push_back(normalizedPath(entry.path()));
+        }
+        if (entryError) {
+            error = "cannot inspect script entry: " + entryError.message();
+            return false;
+        }
+        iterator.increment(iteratorError);
+        if (iteratorError) {
+            error = "cannot enumerate script directory: " + iteratorError.message();
+            return false;
+        }
+    }
+
+    std::sort(scripts.begin(), scripts.end(), [](const fs::path& left, const fs::path& right) {
+        return left.generic_string() < right.generic_string();
+    });
+    return true;
 }
 
 void messageCallback(const asSMessageInfo* message, void*) {
@@ -984,33 +1174,88 @@ sigilhook_status loadDirectory(const fs::path& directory) {
     }
     std::lock_guard lock(g_runtime.mutex);
     std::lock_guard<std::recursive_mutex> entryLock(g_runtime.entryMutex);
+    if (!g_runtime.modules.empty()) {
+        writeLog("script load error: a script application is already loaded");
+        return SIGILHOOK_ERROR_BUSY;
+    }
+
+    const fs::path root = normalizedPath(directory);
+    const fs::path mainPath = normalizedPath(root / "main.as");
+    std::error_code mainError;
+    if (!fs::is_regular_file(mainPath, mainError) || mainError) {
+        writeLog("script load error: main.as was not found in " + root.string());
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+
     std::vector<fs::path> scripts;
-    std::error_code error;
-    for (const auto& entry : fs::directory_iterator(directory, error)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".as") {
-            scripts.push_back(entry.path());
+    std::string collectionError;
+    if (!collectScriptFiles(root, scripts, collectionError)) {
+        writeLog("script load error: " + collectionError);
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+
+    IncludeLoadState includeState;
+    includeState.root = root;
+    std::vector<ScriptSection> sections;
+    includeState.sections = &sections;
+    std::string mainSectionName;
+    for (const fs::path& script : scripts) {
+        std::string source;
+        if (!processScriptFile(script, includeState, false, 0, source)) {
+            writeLog("script load error: " + includeState.error);
+            return SIGILHOOK_ERROR_SCRIPT;
+        }
+        const std::string name = sectionName(script, root);
+        if (script == mainPath) mainSectionName = name;
+        sections.push_back({name, std::move(source)});
+    }
+
+    asIScriptModule* module = g_runtime.engine->GetModule("SigilHook.Application", asGM_ALWAYS_CREATE);
+    if (module == nullptr) {
+        writeLog("failed to create SigilHook.Application module");
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+    for (const ScriptSection& section : sections) {
+        if (module->AddScriptSection(section.name.c_str(), section.source.c_str(), section.source.size()) < 0) {
+            writeLog("failed to add script section " + section.name);
+            module->Discard();
+            return SIGILHOOK_ERROR_SCRIPT;
         }
     }
-    if (error) return SIGILHOOK_ERROR_SCRIPT;
-    std::sort(scripts.begin(), scripts.end());
-    for (const fs::path& script : scripts) {
-        std::string sourceError;
-        const std::string source = loadScriptSource(script, 0, sourceError);
-        if (!sourceError.empty()) {
-            writeLog(sourceError);
+    if (module->Build() < 0) {
+        writeLog("failed to build SigilHook.Application; entry definitions must be unique and valid");
+        module->Discard();
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+
+    asIScriptFunction* mainFunction = module->GetFunctionByDecl("void main()");
+    if (mainFunction == nullptr) {
+        writeLog("script load error: void main() is missing from main.as");
+        module->Discard();
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+    const char* mainOwner = nullptr;
+    if (mainFunction->GetDeclaredAt(&mainOwner, nullptr, nullptr) < 0 ||
+        mainOwner == nullptr || mainSectionName != mainOwner) {
+        writeLog("script load error: void main() must be defined in root main.as");
+        module->Discard();
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+    asIScriptFunction* unloadFunction = module->GetFunctionByDecl("void unload()");
+    if (unloadFunction != nullptr) {
+        const char* unloadOwner = nullptr;
+        if (unloadFunction->GetDeclaredAt(&unloadOwner, nullptr, nullptr) < 0 ||
+            unloadOwner == nullptr || mainSectionName != unloadOwner) {
+            writeLog("script load error: optional void unload() must be defined in root main.as");
+            module->Discard();
             return SIGILHOOK_ERROR_SCRIPT;
         }
-        asIScriptModule* module = g_runtime.engine->GetModule(script.stem().string().c_str(), asGM_ALWAYS_CREATE);
-        if (module == nullptr || module->AddScriptSection(script.string().c_str(), source.c_str(), source.size()) < 0 ||
-            module->Build() < 0) {
-            writeLog("failed to build " + script.string());
-            return SIGILHOOK_ERROR_SCRIPT;
-        }
-        g_runtime.modules.push_back(module);
-        if (!runEntry(module, "void main()")) {
-            writeLog("entry point failed in " + script.string());
-            return SIGILHOOK_ERROR_SCRIPT;
-        }
+    }
+
+    g_runtime.modules.push_back(module);
+    if (!runEntry(module, "void main()")) {
+        writeLog("entry point failed in " + (root / "main.as").string());
+        return SIGILHOOK_ERROR_SCRIPT;
     }
     return SIGILHOOK_OK;
 }
