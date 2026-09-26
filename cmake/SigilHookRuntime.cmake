@@ -3,6 +3,10 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
     option(SIGILHOOK_BUILD_API_SMOKE_TEST "Build the exported C API smoke test" ON)
     option(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST "Build the AngelScript runtime smoke test" ON)
 
+    set(SIGILHOOK_RUNTIME_SCRIPT_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHook")
+    file(MAKE_DIRECTORY "${SIGILHOOK_RUNTIME_SCRIPT_DIR}")
+    configure_file("${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash" "${SIGILHOOK_RUNTIME_SCRIPT_DIR}/SigilHook.ash" COPYONLY)
+
     if(SIGILHOOK_BUILD_INJECTOR_DLL)
         add_library(SigilHookDll SHARED
             ${PROJECT_SOURCE_DIR}/sources/SigilHookApi.cpp
@@ -39,7 +43,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             ARCHIVE DESTINATION lib
         )
         install(FILES ${PROJECT_SOURCE_DIR}/include/sigilhook.h DESTINATION include)
-        install(FILES ${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash DESTINATION share/SigilHook)
+        install(FILES ${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash DESTINATION bin/SigilHook)
 
         if(SIGILHOOK_BUILD_API_SMOKE_TEST)
             add_executable(SigilHookApiSmokeTest
@@ -69,7 +73,6 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
         if(SIGILHOOK_BUILD_SCRIPT_SMOKE_TEST)
             set(SIGILHOOK_SCRIPT_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHookScriptSmokeTestScripts")
             file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}")
-            configure_file(${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash" COPYONLY)
             configure_file(${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/scripts/10-test.as "${SIGILHOOK_SCRIPT_TEST_DIR}/10-test.as" COPYONLY)
             add_executable(SigilHookScriptSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/main.cpp
@@ -95,5 +98,5 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             add_test(NAME SigilHookScriptSmokeTest COMMAND SigilHookScriptSmokeTest)
             set_tests_properties(SigilHookScriptSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
         endif()
-        endif()
+    endif()
 endif()

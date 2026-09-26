@@ -8,11 +8,12 @@
 #include <functional>
 #include <iostream>
 
-#define CHECK(expression) do { if (!(expression)) { std::cerr << "check failed: " #expression << " at line " << __LINE__ << '\n'; char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); std::cerr << error << '\n'; return __LINE__; } } while (false)
+#define CHECK(expression) do { if (!(expression)) { std::cerr << "check failed: " #expression " at line " << __LINE__ << '\n'; char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); std::cerr << error << '\n'; sigilhook_runtime_stop(); return __LINE__; } } while (false)
 
 namespace {
 
 volatile int g_targetCalls = 0;
+volatile int g_conventionTargetCalls = 0;
 volatile int g_usercallTargetCalls = 0;
 
 #if defined(_MSC_VER)
@@ -25,6 +26,14 @@ int SIGILHOOK_CALL target(int value) {
     }
     ++g_targetCalls;
     return result + 1;
+}
+
+#if defined(_MSC_VER)
+__declspec(noinline)
+#endif
+int SIGILHOOK_CALL conventionTarget(int left, int right) {
+    ++g_conventionTargetCalls;
+    return left * 100 + right;
 }
 
 using UsercallCaller = unsigned int (SIGILHOOK_CALL *)(uintptr_t, unsigned int, unsigned int, unsigned int);
@@ -106,21 +115,32 @@ int main() {
     asmjit::JitRuntime runtime;
     const uint64_t usercallTarget = makeUsercallTarget(runtime);
     const uint64_t usercallCaller = makeUsercallCaller(runtime);
+    const Stub memoryStub = makeStub(runtime, [](asmjit::x86::Assembler& a) { a.ret(); });
     CHECK(usercallTarget != 0);
     CHECK(usercallCaller != 0);
+    CHECK(memoryStub.address != 0);
 
     CHECK(sigilhook_runtime_start(nullptr) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64(
         "target", reinterpret_cast<uint64_t>(&target)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallTarget", usercallTarget) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64(
+        "conventionTarget", reinterpret_cast<uint64_t>(&conventionTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallBad", 0) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("scriptBad", 0) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64(
+        "expectedBuildMode", sizeof(void*) == 8 ? 2 : 1) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64(
+        "helperValueAddress", memoryStub.address + 8) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_load_directory(SIGILHOOK_TEST_SCRIPT_DIRECTORY) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_call_entry("void verify()") == SIGILHOOK_OK);
 
     CHECK(target(1) == 77);
     CHECK(g_targetCalls == 0);
+    CHECK(reinterpret_cast<int (SIGILHOOK_CALL *)(int, int)>(
+        reinterpret_cast<uint64_t>(&conventionTarget))(7, 9) == 402);
+    CHECK(g_conventionTargetCalls == 0);
 
     const auto invoke = reinterpret_cast<UsercallCaller>(usercallCaller);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);
@@ -140,6 +160,7 @@ int main() {
     CHECK(sigilhook_runtime_get_shared_u64("usercallBad", &value) == SIGILHOOK_OK);
     CHECK(value == 0);
     CHECK(sigilhook_runtime_get_shared_u64("scriptBad", &value) == SIGILHOOK_OK);
+    if (value != 0) std::cerr << "helper failure step: " << value << std::endl;
     CHECK(value == 0);
     CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
     return 0;

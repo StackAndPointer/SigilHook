@@ -231,6 +231,8 @@ bool Detour::reHook() {
     const auto nops = make_nops(m_fnAddress + m_nopProlOffset, m_nopSize);
     ZydisDisassembler::writeEncoding(nops, *this);
 
+    m_hooked = true;
+
     return true;
 }
 
