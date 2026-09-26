@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 
@@ -251,6 +253,21 @@ uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+bool writeScriptFile(const std::filesystem::path& path, const std::string& source) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) return false;
+    output << source;
+    return output.good();
+}
+
+bool expectScriptLoadFailure(const std::filesystem::path& directory, const char* label) {
+    const sigilhook_status status = sigilhook_runtime_load_directory(directory.c_str());
+    if (status == SIGILHOOK_ERROR_SCRIPT) return true;
+    std::cerr << label << " returned status " << static_cast<int>(status) << '\n';
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -300,6 +317,9 @@ int main() {
     CHECK(sigilhook_runtime_set_shared_u64("helperValueAddress", memoryStub.address + 8) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("expectedBuildMode", sizeof(void*) == 8 ? 2 : 1) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_load_directory(SIGILHOOK_TEST_SCRIPT_DIRECTORY) == SIGILHOOK_OK);
+    uint64_t mainEntryCount = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("mainEntryCount", &mainEntryCount) == SIGILHOOK_OK);
+    CHECK(mainEntryCount == 1);
     CHECK(sigilhook_runtime_call_entry("void verify()") == SIGILHOOK_OK);
 
     uint64_t scriptBad = 0;
@@ -380,6 +400,48 @@ int main() {
     CHECK(sigilhook_runtime_get_shared_u64("scriptBad", &scriptBad) == SIGILHOOK_OK);
     CHECK(scriptBad == 0);
     CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
+    uint64_t unloadCount = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("unloadCount", &unloadCount) == SIGILHOOK_OK);
+    CHECK(unloadCount == 1);
+
+    const std::filesystem::path negativeRoot = std::filesystem::temp_directory_path() /
+        ("SigilHookScriptSmoke-" + std::to_string(GetCurrentProcessId()));
+    std::error_code cleanupError;
+    std::filesystem::remove_all(negativeRoot, cleanupError);
+    cleanupError.clear();
+    CHECK(std::filesystem::create_directories(negativeRoot, cleanupError) && !cleanupError);
+
+    const auto missingMain = negativeRoot / "missing-main";
+    CHECK(writeScriptFile(missingMain / "legacy.as", "void legacy() {}\n"));
+    CHECK(expectScriptLoadFailure(missingMain, "missing main.as"));
+
+    const auto missingEntry = negativeRoot / "missing-entry";
+    CHECK(writeScriptFile(missingEntry / "main.as", "void helper() {}\n"));
+    CHECK(expectScriptLoadFailure(missingEntry, "missing void main()"));
+
+    const auto foreignEntry = negativeRoot / "foreign-entry";
+    CHECK(writeScriptFile(foreignEntry / "main.as", "void helper() {}\n"));
+    CHECK(writeScriptFile(foreignEntry / "other.as", "void main() {}\n"));
+    CHECK(expectScriptLoadFailure(foreignEntry, "main outside main.as"));
+
+    const auto duplicateEntry = negativeRoot / "duplicate-entry";
+    CHECK(writeScriptFile(duplicateEntry / "main.as", "void main() {}\n"));
+    CHECK(writeScriptFile(duplicateEntry / "duplicate.as", "void main() {}\n"));
+    CHECK(expectScriptLoadFailure(duplicateEntry, "duplicate main"));
+
+    const auto cyclicInclude = negativeRoot / "cyclic-include";
+    CHECK(writeScriptFile(cyclicInclude / "main.as", "#include \"a.ash\"\nvoid main() {}\n"));
+    CHECK(writeScriptFile(cyclicInclude / "a.ash", "#include \"b.ash\"\n"));
+    CHECK(writeScriptFile(cyclicInclude / "b.ash", "#include \"a.ash\"\n"));
+    CHECK(expectScriptLoadFailure(cyclicInclude, "cyclic include"));
+
+    const auto missingInclude = negativeRoot / "missing-include";
+    CHECK(writeScriptFile(missingInclude / "main.as", "#include \"not-found.ash\"\nvoid main() {}\n"));
+    CHECK(expectScriptLoadFailure(missingInclude, "missing include"));
+
+    CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
+    std::filesystem::remove_all(negativeRoot, cleanupError);
+    CHECK(!cleanupError);
     CloseHandle(hardwareThread);
     return 0;
 }

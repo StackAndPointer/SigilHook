@@ -17,27 +17,34 @@ Place scripts in:
 <SigilHook.dll directory>\SigilHook\logs\SigilHook.log
 ```
 
-AngelScript source files use `.as`. Script headers use `.ash`; they are not C/C++
-headers. The loader supports `#include "helpers.ash"` with relative paths,
-recursive include expansion, depth limits, and cycle/error logging.
-Copy [`scripts/SigilHook.ash`](scripts/SigilHook.ash) into the script directory and
-include it from each script to use the standard helper API.
+The root script directory must contain `main.as`. Other `.as` files may be organized in subdirectories.
 
-Each `.as` file is compiled as a separate module. Optional entry points are:
+AngelScript source files use `.as`. Script headers use `.ash`; they are not C/C++ headers. Every `.as` file is added as a section of one `SigilHook.Application` module, so global functions and variables can call and modify each other directly without `import` or `export`. The loader recursively collects source files in deterministic path order and requires the root entry file:
+
+```text
+<SigilHook.dll directory>\SigilHook\main.as
+<SigilHook.dll directory>\SigilHook\include\*.ash
+```
+
+Headers are included with `#include "helpers.ash"` or `#include <helpers.ash>`, resolved relative to the including file and then the script root. Each normalized header path is expanded once for the whole application, so repeated includes are safe without a protection macro. `#pragma once` is accepted and removed. Nested includes, missing files, invalid paths, cycles, and depth over 16 are reported with the include chain. This loader does not implement `#ifndef/#define` or a full C preprocessor.
+
+Copy [`scripts/SigilHook.ash`](scripts/SigilHook.ash) into the script directory and include it from any source file to use the standard helper API.
+
+Only root `main.as` may provide the required and optional entry points:
 
 ```angelscript
 void main() {}
 void unload() {}
 ```
 
+A missing `main.as`, missing `void main()`, duplicate entry, entry in another file, or optional `void unload()` outside `main.as` is a script-load error. The module is built once and `main()` is executed once after the complete application compiles; `unload()` runs once during runtime shutdown.
+
 Hook callbacks can modify arguments, call `callOriginal()`, skip the original with
 `skipOriginal()`, and override the final result with `setReturnValue(value)`. The
 standard `shReturnEarly(value)` helper combines a return override with skipping
 the original function.
 
-Scripts are sorted by filename before loading. The DLL initializes AngelScript on
-a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown
-is intentionally not performed from `DllMain` under the Windows loader lock.
+The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock.
 
 ## Standard helper API
 
