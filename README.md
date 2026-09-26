@@ -41,7 +41,7 @@ is intentionally not performed from `DllMain` under the Windows loader lock.
 
 ## Standard helper API
 
-`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 87
+`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 105
 `sh*` functions. It includes both convenience functions that install immediately
 and status-returning functions that preserve the underlying C ABI result:
 
@@ -51,6 +51,9 @@ and status-returning functions that preserve the underlying C ABI result:
 - install, remove, rehook, destroy, state query, trampoline, debug, follow-call,
   maximum-depth, and x64 detour-scheme controls
 - argument, register, flag, return, original-call, and early-return controls
+- callback instruction-pointer inspection and control-flow redirection
+- Zydis disassembly, hexadecimal parsing, CMP/TEST flag helpers, FXSAVE/FXRSTOR,
+  return snippets, and stack-pointer jump snippets
 - byte-array reads and writes, scalar memory helpers, memory protection, pattern
   scanning, shared values, script-directory loading, and entry invocation
 - script JIT creation, detour binding, JIT destruction, status strings, and
@@ -83,6 +86,34 @@ such as direction and trap state should not be relied on across a language ABI.
 A mapped argument is available through both `shArg` and its register alias. If
 `shSetArg` explicitly changes that argument, the argument value wins over
 `shSetReg`; otherwise the mapped register write is applied.
+
+`shInstructionPointer()` reports the hooked target address. Calling
+`shSetInstructionPointer(address)` redirects control after the callback has
+restored mapped arguments and flags. The redirect uses one volatile scratch
+register (`R10` on x64 or `EAX` on x86), so custom mappings should not assign
+an argument to that register when redirecting.
+
+## Assembly helpers
+
+The standard helpers include equivalents for the reference HookAsm API:
+
+- `shDisAsm` and `shDisAsmStatus` decode readable bytes with Zydis
+- `shHtoi` and `shParseHexStatus` parse hexadecimal values
+- `shAsmCmp` and `shAsmTest` compute x86/x64 arithmetic flag values
+- `shAsmFxsave` and `shAsmFxrstor` copy a 512-byte aligned FXSAVE area
+- `shAsmRet`, `shAsmRetFree`, `shAsmMovEspAndJmp`, and
+  `shAsmMovEspAndJmpFree` create and release executable snippets
+
+The stack-jump helper moves `ESP` on x86 and `RSP` on x64 before jumping to
+the target. Snippet addresses must be released with their matching `Free` helper.
+
+Reference-project hook entry points map as follows: `HookDisAsm` maps to the
+disassembly helpers, `HookBegin`/`HookStop` to `shHookScript`/`shUnhook`,
+and `HookFunctionBegin`/`HookFunctionStop` to detour creation plus
+`shTrampoline`. The reference `OriginalCodeLocation` choices are represented by
+the default original-call ordering, `shSkipOriginal`, `shKeepOriginal`, and
+`shSetInstructionPointer`; `jmpBackAddress` is the equivalent IP redirect.
+Host-only runtime controls are intentionally not script globals.
 
 ## Usercall mappings
 
@@ -134,9 +165,11 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
 - hook lifecycle and detour configuration
 - JIT callbacks with editable arguments, return values, GPRs, and flags
 - memory reads, writes, protection changes, and pattern scanning
+- Zydis disassembly, CMP/TEST flags, FXSAVE/FXRSTOR, executable snippets,
+  and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x00020004`. All addresses cross the ABI as `uint64_t`.
+The current API version is `0x00020005`. All addresses cross the ABI as `uint64_t`.
 Hook construction returns status codes instead of throwing C++ exceptions across
 the boundary.
 
