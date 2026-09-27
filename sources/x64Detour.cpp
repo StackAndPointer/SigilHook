@@ -507,6 +507,7 @@ const auto& get_scratch_to_64() {
 }
 
 struct TranslationResult {
+    bool vectorMemory = false;
     string instruction;
     string scratch_register;
     string address_register;
@@ -557,6 +558,16 @@ optional<TranslationResult> translate_instruction(const Instruction& instruction
         const auto reg = instruction.getRegister();
         const auto regClass = ZydisRegisterGetClass(reg);
         const string reg_string = ZydisRegisterGetString(reg);
+
+        if (regClass == ZYDIS_REGCLASS_XMM) {
+            TranslationResult result;
+            result.vectorMemory = true;
+            result.address_register = instruction.startsWithDisplacement() ? "r14" : "r15";
+            result.instruction = instruction.startsWithDisplacement()
+                ? mnemonic + " [" + result.address_register + "], " + reg_string
+                : mnemonic + " " + reg_string + ", [" + result.address_register + "]";
+            return result;
+        }
 
         if (get_a_to_b().contains(reg)) {
             // This is a register A
@@ -647,7 +658,16 @@ optional<uint64_t> x64Detour::generateTranslationRoutine(const Instruction& inst
             return {};
         }
 
-        auto [translated_instruction, scratch_register, address_register] = *result;
+
+        const string& translated_instruction = result->instruction;
+        const string& scratch_register = result->scratch_register;
+        const string& address_register = result->address_register;
+        if (result->vectorMemory) {
+            translation.emplace_back("push " + address_register);
+            translation.emplace_back("mov " + address_register + ", " + int_to_hex(instruction.getDestination()));
+            translation.emplace_back(result->instruction);
+            translation.emplace_back("pop " + address_register);
+        } else {
 
         const auto& scratch_register_64 = get_scratch_to_64().at(scratch_register);
 
@@ -677,6 +697,7 @@ optional<uint64_t> x64Detour::generateTranslationRoutine(const Instruction& inst
 
         // Restore the scratch register
         translation.emplace_back("pop " + scratch_register_64);
+        }
     }
 
     // ALWAYS: Jump back to trampoline, ret cleans up the lea from earlier
