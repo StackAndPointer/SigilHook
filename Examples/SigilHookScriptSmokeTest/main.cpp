@@ -434,16 +434,28 @@ int main() {
     CHECK(floatResult == 4.5f);
     CHECK(midTarget(35) == 42);
     CHECK(g_midTargetCalls == 1);
+    g_conventionTargetCalls = 0;
+    std::cerr << "calling stdcall" << std::endl;
     CHECK(reinterpret_cast<StdCallFn>(&stdcallTarget)(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after stdcall: " << g_conventionTargetCalls << '\n';
+    std::cerr << "after stdcall value: " << g_conventionTargetCalls << std::endl;
+    std::cerr << "calling fastcall" << std::endl;
     CHECK(reinterpret_cast<FastCallFn>(&fastcallTarget)(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after fastcall: " << g_conventionTargetCalls << '\n';
+    std::cerr << "after fastcall value: " << g_conventionTargetCalls << std::endl;
+    std::cerr << "calling thiscall" << std::endl;
     CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after thiscall: " << g_conventionTargetCalls << '\n';
+    std::cerr << "after thiscall value: " << g_conventionTargetCalls << std::endl;
+    std::cerr << "calling vectorcall" << std::endl;
     CHECK(reinterpret_cast<VectorCallFn>(&vectorcallTarget)(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after vectorcall: " << g_conventionTargetCalls << '\n';
+    std::cerr << "after vectorcall value: " << g_conventionTargetCalls << std::endl;
+    std::cerr << "calling cdecl" << std::endl;
     CHECK(reinterpret_cast<int (SIGILHOOK_CALL *)(int, int)>(reinterpret_cast<uint64_t>(&cdeclTarget))(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after cdecl: " << g_conventionTargetCalls << '\n';
+    std::cerr << "after cdecl value: " << g_conventionTargetCalls << std::endl;
+    std::cerr << "convention target calls final: " << g_conventionTargetCalls << std::endl;
     if (g_conventionTargetCalls != 0) {
         std::ifstream runtimeLog(scriptDirectory / "logs" / "SigilHook.log");
         if (runtimeLog) std::cerr << runtimeLog.rdbuf() << std::endl;
