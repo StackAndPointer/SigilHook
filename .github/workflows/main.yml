@@ -205,8 +205,18 @@ jobs:
         run: |
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -name '*.zip' -print | sort)
           test "${#assets[@]}" -eq 6
-          gh release create "$RELEASE_TAG" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" \
-            --generate-notes
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+          fi
