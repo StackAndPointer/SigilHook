@@ -507,6 +507,7 @@ const auto& get_scratch_to_64() {
 }
 
 struct TranslationResult {
+    bool unaryMemory = false;
     bool vectorMemory = false;
     string instruction;
     string scratch_register;
@@ -554,6 +555,22 @@ optional<TranslationResult> translate_instruction(const Instruction& instruction
 
         address_register_string = "r15";
         second_operand_string = immediate_string;
+    } else if (!instruction.hasRegister() && (mnemonic == "inc" || mnemonic == "dec" || mnemonic == "not" || mnemonic == "neg")) {
+        const string fullName = instruction.getFullName();
+        const string pointerSize =
+            string_contains(fullName, "qword") ? "qword" :
+            string_contains(fullName, "dword") ? "dword" :
+            string_contains(fullName, "word") ? "word" :
+            string_contains(fullName, "byte") ? "byte" : "";
+        if (pointerSize.empty()) {
+            Log::log("Failed to detect unary memory operand size: " + fullName, ErrorLevel::SEV);
+            return {};
+        }
+        TranslationResult result;
+        result.unaryMemory = true;
+        result.address_register = "r15";
+        result.instruction = mnemonic + " " + pointerSize + " ptr [r15]";
+        return result;
     } else if (instruction.hasRegister()) {// 2nd operand is register
         const auto reg = instruction.getRegister();
         const auto regClass = ZydisRegisterGetClass(reg);
@@ -663,6 +680,11 @@ optional<uint64_t> x64Detour::generateTranslationRoutine(const Instruction& inst
         const string& scratch_register = result->scratch_register;
         const string& address_register = result->address_register;
         if (result->vectorMemory) {
+            translation.emplace_back("push " + address_register);
+            translation.emplace_back("mov " + address_register + ", " + int_to_hex(instruction.getDestination()));
+            translation.emplace_back(result->instruction);
+            translation.emplace_back("pop " + address_register);
+        } else if (result->unaryMemory) {
             translation.emplace_back("push " + address_register);
             translation.emplace_back("mov " + address_register + ", " + int_to_hex(instruction.getDestination()));
             translation.emplace_back(result->instruction);
