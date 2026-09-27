@@ -22,6 +22,7 @@ uint64 g_stdcallHook = SH_INVALID_HANDLE;
 uint64 g_fastcallHook = SH_INVALID_HANDLE;
 uint64 g_thiscallHook = SH_INVALID_HANDLE;
 uint64 g_vectorcallHook = SH_INVALID_HANDLE;
+uint64 g_conventionCallbackCalls = 0;
 uint64 g_usercallHook = SH_INVALID_HANDLE;
 uint64 g_pointerHook = SH_INVALID_HANDLE;
 uint64 g_floatHook = SH_INVALID_HANDLE;
@@ -175,6 +176,8 @@ void onTarget() {
 }
 
 void onConvention() {
+    ++g_conventionCallbackCalls;
+    shSetSharedU64("conventionCallbackCalls", g_conventionCallbackCalls);
     g_helperStep = 20;
     if (shArg(0) != 7 || shArg(1) != 9) { failHelperTest(); return; }
     shSetArg(0, 4);
