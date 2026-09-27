@@ -444,10 +444,14 @@ int main() {
     if (g_conventionTargetCalls != 0) std::cerr << "after fastcall: " << g_conventionTargetCalls << '\n';
     std::cerr << "after fastcall value: " << g_conventionTargetCalls << std::endl;
     std::cerr << "calling thiscall" << std::endl;
+    const auto thiscallAddress = memberFunctionAddress(&ThisCallTarget::target);
+    std::cerr << "thiscall address=0x" << std::hex << thiscallAddress << " byte=" << static_cast<unsigned>(*reinterpret_cast<const unsigned char*>(thiscallAddress)) << std::dec << std::endl;
     CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after thiscall: " << g_conventionTargetCalls << '\n';
     std::cerr << "after thiscall value: " << g_conventionTargetCalls << std::endl;
     std::cerr << "calling vectorcall" << std::endl;
+    const auto vectorcallAddress = reinterpret_cast<uint64_t>(&vectorcallTarget);
+    std::cerr << "vectorcall address=0x" << std::hex << vectorcallAddress << " byte=" << static_cast<unsigned>(*reinterpret_cast<const unsigned char*>(vectorcallAddress)) << std::dec << std::endl;
     CHECK(reinterpret_cast<VectorCallFn>(&vectorcallTarget)(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after vectorcall: " << g_conventionTargetCalls << '\n';
     std::cerr << "after vectorcall value: " << g_conventionTargetCalls << std::endl;
