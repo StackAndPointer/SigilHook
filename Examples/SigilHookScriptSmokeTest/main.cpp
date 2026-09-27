@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: MIT
 #include "sigilhook.h"
 
+#if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+#include "NativeBindingTest.h"
+#endif
+
 #include <Windows.h>
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
@@ -38,6 +42,7 @@ using VectorCallFn = int (*)(int, int);
 namespace {
 
 volatile LONG g_targetCalls = 0;
+volatile LONG g_midTargetCalls = 0;
 volatile LONG g_conventionTargetCalls = 0;
 volatile LONG g_usercallTargetCalls = 0;
 volatile LONG g_pointerTargetCalls = 0;
@@ -77,6 +82,15 @@ NOINLINE int SIGILHOOK_CALL target(int value) {
     for (int index = 0; index < 8; ++index) result += index - index;
     ++g_targetCalls;
     return result + 1;
+}
+
+NOINLINE float floatTarget(float value) {
+    return value + 1.0f;
+}
+
+NOINLINE int SIGILHOOK_CALL midTarget(int value) {
+    ++g_midTargetCalls;
+    return value + 7;
 }
 
 NOINLINE int SIGILHOOK_CALL cdeclTarget(int left, int right) {
@@ -289,6 +303,18 @@ bool expectScriptLoadFailure(const std::filesystem::path& directory, const char*
 } // namespace
 
 int main() {
+    const std::filesystem::path configuredScriptDirectory = SIGILHOOK_TEST_SCRIPT_DIRECTORY;
+    const std::filesystem::path scriptDirectory = std::filesystem::temp_directory_path() /
+        ("SigilHookScriptSmokeTestScripts-" + std::to_string(GetCurrentProcessId()));
+    std::error_code scriptCopyError;
+    std::filesystem::remove_all(scriptDirectory, scriptCopyError);
+    scriptCopyError.clear();
+    std::filesystem::copy(configuredScriptDirectory, scriptDirectory,
+        std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing,
+        scriptCopyError);
+    CHECK(!scriptCopyError);
+    std::filesystem::remove_all(scriptDirectory / "logs", scriptCopyError);
+    CHECK(!scriptCopyError);
     asmjit::JitRuntime runtime;
     const uint64_t usercallTarget = makeUsercallTarget(runtime);
     const uint64_t pointerTarget = makePointerTarget(runtime);
@@ -301,12 +327,43 @@ int main() {
     CHECK(usercallCaller != 0);
     CHECK(memoryStub.address != 0);
 
+#if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+    CHECK(SHNativeAdd(6, 7) == 13);
+    CHECK(SHNativeScale(1.5f) == 4.5);
+    CHECK(SHNativeTextLength("SigilHook") == 9);
+    CHECK(SHNativeWideLength(L"SigilHook") == 9);
+    CHECK(SHNativeEchoPointer(reinterpret_cast<void*>(static_cast<uintptr_t>(0x1234))) ==
+        reinterpret_cast<void*>(static_cast<uintptr_t>(0x1234)));
+    CHECK(SHNativeCdeclSum(7, 9) == 402);
+    CHECK(reinterpret_cast<StdCallFn>(&SHNativeStdcallSum)(7, 9) == 402);
+    CHECK(reinterpret_cast<FastCallFn>(&SHNativeFastcallSum)(7, 9) == 402);
+    CHECK(reinterpret_cast<ThisCallFn>(&SHNativeThiscallSum)(7, 9) == 402);
+    CHECK(SHNativeVectorcallSum(7, 9) == 402);
+    SHNativeS1 s1{10};
+    SHNativeS4 s4{20};
+    SHNativeS8 s8{30};
+    SHNativeS16 s16{40, 50};
+    SHNativeS32 s32{60, 70, 80, 90};
+    SHNativePacked5 packed{2, 100};
+    CHECK(SHNativeEcho1(s1).value == 11);
+    CHECK(SHNativeEcho4(s4).value == 24);
+    CHECK(SHNativeEcho8(s8).value == 38);
+    const SHNativeS16 s16Result = SHNativeEcho16(s16);
+    CHECK(s16Result.low == 56 && s16Result.high == 82);
+    const SHNativeS32 s32Result = SHNativeEcho32(s32);
+    CHECK(s32Result.a == 61 && s32Result.b == 72 && s32Result.c == 83 && s32Result.d == 94);
+    const SHNativePacked5 packedResult = SHNativeEchoPacked(packed);
+    CHECK(packedResult.tag == 3 && packedResult.value == 105);
+#endif
+
     DWORD hardwareThreadId = 0;
     HANDLE hardwareThread = CreateThread(nullptr, 0, hardwareWorker, nullptr, CREATE_SUSPENDED, &hardwareThreadId);
     CHECK(hardwareThread != nullptr);
 
     CHECK(sigilhook_runtime_start(nullptr) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("target", reinterpret_cast<uint64_t>(&target)) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("floatTarget", reinterpret_cast<uint64_t>(&floatTarget)) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("midTarget", reinterpret_cast<uint64_t>(&midTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("cdeclTarget", reinterpret_cast<uint64_t>(&cdeclTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("stdcallTarget", reinterpret_cast<uint64_t>(&stdcallTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("fastcallTarget", reinterpret_cast<uint64_t>(&fastcallTarget)) == SIGILHOOK_OK);
@@ -334,7 +391,9 @@ int main() {
     CHECK(sigilhook_runtime_set_shared_u64("vtableCallback", reinterpret_cast<uint64_t>(&vtableCallback)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("helperValueAddress", memoryStub.address + 8) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("expectedBuildMode", sizeof(void*) == 8 ? 2 : 1) == SIGILHOOK_OK);
-    CHECK(sigilhook_runtime_load_directory(SIGILHOOK_TEST_SCRIPT_DIRECTORY) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("nativeBindingPointer", 0x1234) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("nativeBindingBad", 0) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_load_directory(scriptDirectory.c_str()) == SIGILHOOK_OK);
     uint64_t mainEntryCount = 0;
     CHECK(sigilhook_runtime_get_shared_u64("mainEntryCount", &mainEntryCount) == SIGILHOOK_OK);
     CHECK(mainEntryCount == 1);
@@ -351,6 +410,9 @@ int main() {
         std::cerr << "invoke status: " << invokeStatus << ", result: " << invokeResult << std::endl;
     }
     CHECK(scriptBad == 0);
+    uint64_t nativeBindingBad = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("nativeBindingBad", &nativeBindingBad) == SIGILHOOK_OK);
+    CHECK(nativeBindingBad == 0);
     CHECK(g_usercallTargetCalls == 1);
     g_usercallTargetCalls = 0;
     CHECK(g_pointerTargetCalls == 1);
@@ -366,6 +428,10 @@ int main() {
 
     CHECK(target(1) == 42);
     CHECK(g_targetCalls == 1);
+    const float floatResult = floatTarget(1.5f);
+    CHECK(floatResult == 4.5f);
+    CHECK(midTarget(35) == 42);
+    CHECK(g_midTargetCalls == 1);
     CHECK(reinterpret_cast<StdCallFn>(&stdcallTarget)(7, 9) == 402);
     CHECK(reinterpret_cast<FastCallFn>(&fastcallTarget)(7, 9) == 402);
     CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);

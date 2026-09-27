@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: MIT
 #include "sigilhook.h"
 
+#if defined(_WIN32)
+#include <Windows.h>
+#include <filesystem>
+#endif
+
+#if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+#include "NativeBindingTest.h"
+#endif
+
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
 
@@ -34,6 +43,7 @@ volatile int g_redirectTargetCalls = 0;
 volatile int g_stackTargetCalls = 0;
 volatile int g_stackRedirectCalls = 0;
 int g_badStackFrame = 0;
+int g_badXmmFrame = 0;
 uint64_t g_stackExpectedInstructionPointer = 0;
 uint64_t g_stackRedirectAddress = 0;
 
@@ -167,6 +177,19 @@ void SIGILHOOK_CALL usercallCallback(sigilhook_call_frame* frame, void*) {
 }
 
 void SIGILHOOK_CALL invalidMappingCallback(sigilhook_call_frame*, void*) {}
+void SIGILHOOK_CALL xmmCallback(sigilhook_call_frame* frame, void*) {
+    uint64_t low = 0;
+    uint64_t high = 0;
+    if (sigilhook_call_frame_get_xmm(frame, SIGILHOOK_XMM_0, 0, &low) != SIGILHOOK_OK || low != UINT64_C(0x40200000)) ++g_badXmmFrame;
+    if (sigilhook_call_frame_set_xmm(frame, SIGILHOOK_XMM_0, 0, UINT64_C(0x3f800000)) != SIGILHOOK_OK) ++g_badXmmFrame;
+    if (sigilhook_call_frame_set_xmm(frame, SIGILHOOK_XMM_0, 1, UINT64_C(0x1122334455667788)) != SIGILHOOK_OK) ++g_badXmmFrame;
+    if (sigilhook_call_frame_get_xmm(frame, SIGILHOOK_XMM_0, 0, &low) != SIGILHOOK_OK || low != UINT64_C(0x3f800000)) ++g_badXmmFrame;
+    if (sigilhook_call_frame_get_xmm(frame, SIGILHOOK_XMM_0, 1, &high) != SIGILHOOK_OK || high != UINT64_C(0x1122334455667788)) ++g_badXmmFrame;
+    if (sigilhook_call_frame_get_xmm(frame, SIGILHOOK_XMM_0, 2, &low) != SIGILHOOK_ERROR_INVALID_ARGUMENT) ++g_badXmmFrame;
+    if (sigilhook_build_mode() == SIGILHOOK_MODE_X86 &&
+        sigilhook_call_frame_get_xmm(frame, SIGILHOOK_XMM_8, 0, &low) != SIGILHOOK_ERROR_ARCH_MISMATCH) ++g_badXmmFrame;
+    *frame->call_original = 0;
+}
 
 void SIGILHOOK_CALL pointerCallback(sigilhook_call_frame* frame, void*) {
     if (frame->argument_count != 1 || frame->arguments[0] != reinterpret_cast<uint64_t>(g_expectedPointer)) {
@@ -205,6 +228,33 @@ Stub makeStub(asmjit::JitRuntime& runtime, const std::function<void(asmjit::x86:
     return result;
 }
 
+uint64_t makeXmmProbe(asmjit::JitRuntime& runtime, uint64_t callback) {
+    return makeStub(runtime, [callback](asmjit::x86::Assembler& a) {
+        const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
+        a.mov(asmjit::x86::eax, UINT32_C(0x40200000));
+        a.movd(asmjit::x86::xmm0, asmjit::x86::eax);
+        if (is64) {
+            a.sub(asmjit::x86::rsp, 40);
+            a.mov(asmjit::x86::r10, callback);
+            a.call(asmjit::x86::r10);
+            a.add(asmjit::x86::rsp, 40);
+        } else {
+            a.push(0);
+            a.mov(asmjit::x86::eax, static_cast<uint32_t>(callback));
+            a.call(asmjit::x86::eax);
+            a.add(asmjit::x86::esp, 4);
+        }
+        if (is64) {
+            a.movd(asmjit::x86::eax, asmjit::x86::xmm0);
+        } else {
+            a.sub(asmjit::x86::esp, 4);
+            a.fstp(asmjit::x86::dword_ptr(asmjit::x86::esp));
+            a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::esp));
+            a.add(asmjit::x86::esp, 4);
+        }
+        a.ret();
+    }).address;
+}
 uint64_t makeUsercallTarget(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -276,8 +326,25 @@ uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+int testXmmRegisters() {
+    asmjit::JitRuntime runtime;
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    const char* xmmArgumentType = sigilhook_build_mode() == SIGILHOOK_MODE_X64 ? "float" : "int";
+    CHECK(sigilhook_create_jit_callback(
+        "float", xmmArgumentType, "cdecl", xmmCallback, nullptr, &jit, &callbackAddress) == SIGILHOOK_OK);
+    const uint64_t probe = makeXmmProbe(runtime, callbackAddress);
+    CHECK(probe != 0);
+    const auto probeFunction = reinterpret_cast<uint32_t (*)()>(probe);
+    const uint32_t probeResult = probeFunction();
+    CHECK(probeResult == UINT32_C(0x3f800000));
+    CHECK(g_badXmmFrame == 0);
+    CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    return 0;
+}
 int testBasicJitDetour() {
     CHECK(sigilhook_api_version() >= 0x00020006);
+    CHECK(sigilhook_api_version() >= 0x00020009);
     sigilhook_jit_handle jit{};
     uint64_t callbackAddress = 0;
     CHECK(sigilhook_create_jit_callback(
@@ -560,15 +627,159 @@ int testStackArgumentRedirect() {
     return 0;
 }
 
+#if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+int testNativeBindingBlob() {
+    uint64_t module = 0;
+    CHECK(sigilhook_module_load("NativeBindingTestDll.dll", &module) == SIGILHOOK_OK);
+    CHECK(module != 0);
+    CHECK(sigilhook_module_export(module, "MissingNativeExport", nullptr) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    uint64_t missing = 0;
+    CHECK(sigilhook_module_export(module, "MissingNativeExport", &missing) == SIGILHOOK_ERROR_NOT_FOUND);
+
+    uint64_t addAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeAdd", "cdecl", &addAddress) == SIGILHOOK_OK);
+    const char* addSignature = "ret=i,4,4,0,4;args=i,4,4,0,4|i,4,4,4,4";
+    int32_t addArguments[2] = {6, 7};
+    int32_t addResult = 0;
+    CHECK(sigilhook_invoke_native_blob(addAddress, addSignature, addSignature, "cdecl",
+        addArguments, sizeof(addArguments), &addResult, sizeof(addResult)) == SIGILHOOK_OK);
+    if (addResult != SHNativeAdd(6, 7)) {
+        CHECK(false);
+    }
+
+    uint64_t scaleAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeScale", "cdecl", &scaleAddress) == SIGILHOOK_OK);
+    const char* scaleSignature = "ret=d,8,8,0,8;args=f,4,4,0,4";
+    float scaleArgument = 1.5f;
+    double scaleResult = 0.0;
+    CHECK(sigilhook_invoke_native_blob(scaleAddress, scaleSignature, scaleSignature, "cdecl",
+        &scaleArgument, sizeof(scaleArgument), &scaleResult, sizeof(scaleResult)) == SIGILHOOK_OK);
+    CHECK(scaleResult == SHNativeScale(scaleArgument));
+    const std::string pointerWidth = std::to_string(sizeof(void*));
+    const std::string pointerSignature = "ret=p," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth + ";args=p," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth;
+    uint64_t pointerAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEchoPointer", "cdecl", &pointerAddress) == SIGILHOOK_OK);
+    const uintptr_t pointerValue = sizeof(void*) == 8 ? UINT64_C(0x123456789abc) : UINT32_C(0x12345678);
+    uintptr_t pointerResult = 0;
+    CHECK(sigilhook_invoke_native_blob(pointerAddress, pointerSignature.c_str(), pointerSignature.c_str(), "cdecl", &pointerValue, sizeof(pointerValue), &pointerResult, sizeof(pointerResult)) == SIGILHOOK_OK);
+    CHECK(pointerResult == pointerValue);
+
+    uint64_t textLengthAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeTextLength", "cdecl", &textLengthAddress) == SIGILHOOK_OK);
+    const char* narrowText = "SigilHook";
+    const uintptr_t narrowTextPointer = reinterpret_cast<uintptr_t>(narrowText);
+    const std::string textSignature = "ret=i,4,4,0,4;args=s," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth;
+    int32_t narrowLength = 0;
+    CHECK(sigilhook_invoke_native_blob(textLengthAddress, textSignature.c_str(), textSignature.c_str(), "cdecl", &narrowTextPointer, sizeof(narrowTextPointer), &narrowLength, sizeof(narrowLength)) == SIGILHOOK_OK);
+    CHECK(narrowLength == 9);
+
+    uint64_t wideLengthAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeWideLength", "cdecl", &wideLengthAddress) == SIGILHOOK_OK);
+    const wchar_t* wideText = L"SigilHook";
+    const uintptr_t wideTextPointer = reinterpret_cast<uintptr_t>(wideText);
+    const std::string wideSignature = "ret=i,4,4,0,4;args=w," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth;
+    int32_t wideLength = 0;
+    CHECK(sigilhook_invoke_native_blob(wideLengthAddress, wideSignature.c_str(), wideSignature.c_str(), "cdecl", &wideTextPointer, sizeof(wideTextPointer), &wideLength, sizeof(wideLength)) == SIGILHOOK_OK);
+    CHECK(wideLength == 9);
+    struct ProbeS1 { uint8_t value; } probe1{10}, probe1Result{};
+    const char* record1Signature = "ret=r,1,1,0,1;args=r,1,1,0,1";
+    uint64_t echo1Address = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEcho1", "cdecl", &echo1Address) == SIGILHOOK_OK);
+    CHECK(sigilhook_invoke_native_blob(echo1Address, record1Signature, record1Signature, "cdecl", &probe1, sizeof(probe1), &probe1Result, sizeof(probe1Result)) == SIGILHOOK_OK);
+    CHECK(probe1Result.value == 11);
+
+    struct ProbeS4 { uint32_t value; } probe4{20}, probe4Result{};
+    const char* record4Signature = "ret=r,4,4,0,4;args=r,4,4,0,4";
+    uint64_t echo4Address = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEcho4", "cdecl", &echo4Address) == SIGILHOOK_OK);
+    CHECK(sigilhook_invoke_native_blob(echo4Address, record4Signature, record4Signature, "cdecl", &probe4, sizeof(probe4), &probe4Result, sizeof(probe4Result)) == SIGILHOOK_OK);
+    CHECK(probe4Result.value == 24);
+
+    struct ProbeS8 { uint64_t value; } probe8{30}, probe8Result{};
+    const char* record8Signature = "ret=r,8,8,0,8;args=r,8,8,0,8";
+    uint64_t echo8Address = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEcho8", "cdecl", &echo8Address) == SIGILHOOK_OK);
+    CHECK(sigilhook_invoke_native_blob(echo8Address, record8Signature, record8Signature, "cdecl", &probe8, sizeof(probe8), &probe8Result, sizeof(probe8Result)) == SIGILHOOK_OK);
+    CHECK(probe8Result.value == 38);
+    struct ProbeS32 { uint64_t a, b, c, d; } probe32{60, 70, 80, 90}, probe32Result{};
+    const char* record32Signature = "ret=r,32,8,0,32;args=r,32,8,0,32";
+    uint64_t echo32Address = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEcho32", "cdecl", &echo32Address) == SIGILHOOK_OK);
+    CHECK(sigilhook_invoke_native_blob(echo32Address, record32Signature, record32Signature, "cdecl", &probe32, sizeof(probe32), &probe32Result, sizeof(probe32Result)) == SIGILHOOK_OK);
+    CHECK(probe32Result.a == 61 && probe32Result.b == 72 && probe32Result.c == 83 && probe32Result.d == 94);
+    uint64_t echo16Address = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEcho16", "cdecl", &echo16Address) == SIGILHOOK_OK);
+    struct ProbeS16 { uint64_t low; uint64_t high; } probe16{40, 50}, probe16Result{};
+    const char* record16Signature = "ret=r,16,8,0,16;args=r,16,8,0,16";
+    CHECK(sigilhook_invoke_native_blob(echo16Address, record16Signature, record16Signature, "cdecl", &probe16, sizeof(probe16), &probe16Result, sizeof(probe16Result)) == SIGILHOOK_OK);
+    CHECK(probe16Result.low == 56 && probe16Result.high == 82);
+    SHNativePacked5 probePacked{2, 100}, probePackedResult{};
+    uint64_t packedAddress = 0;
+    CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEchoPacked", "cdecl", &packedAddress) == SIGILHOOK_OK);
+    const char* packedSignature = "ret=r,5,1,0,5;args=r,5,1,0,5";
+    CHECK(sigilhook_invoke_native_blob(packedAddress, packedSignature, packedSignature, "cdecl", &probePacked, sizeof(probePacked), &probePackedResult, sizeof(probePackedResult)) == SIGILHOOK_OK);
+    CHECK(probePackedResult.tag == 3 && probePackedResult.value == 105);
+    const char* conventionNames[] = {"cdecl", "stdcall", "fastcall", "thiscall", "vectorcall"};
+    const char* conventionExports[] = {"SHNativeCdeclSum", "SHNativeStdcallSum", "SHNativeFastcallSum", "SHNativeThiscallSum", "SHNativeVectorcallSum"};
+    for (size_t conventionIndex = 0; conventionIndex < std::size(conventionNames); ++conventionIndex) {
+        uint64_t conventionAddress = 0;
+        CHECK(sigilhook_native_address("NativeBindingTestDll.dll", conventionExports[conventionIndex], conventionNames[conventionIndex], &conventionAddress) == SIGILHOOK_OK);
+        int32_t conventionArguments[2] = {7, 9};
+        int32_t conventionResult = 0;
+        const sigilhook_status conventionStatus = sigilhook_invoke_native_blob(conventionAddress, addSignature, addSignature, conventionNames[conventionIndex], conventionArguments, sizeof(conventionArguments), &conventionResult, sizeof(conventionResult));
+        if (conventionStatus != SIGILHOOK_OK || conventionResult != 402) {
+            CHECK(false);
+        }
+    }
+    CHECK(sigilhook_invoke_native_blob(scaleAddress, scaleSignature, "ret=d,8,8,0,8;args=f,4,4,0,5", "cdecl",
+        &scaleArgument, sizeof(scaleArgument), &scaleResult, sizeof(scaleResult)) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    asmjit::JitRuntime usercallRuntime;
+    const uint64_t usercallTarget = makePointerTarget(usercallRuntime);
+    CHECK(usercallTarget != 0);
+    const char* usercallConvention = sigilhook_build_mode() == SIGILHOOK_MODE_X64
+        ? "usercall:ret=rax;arg0=rcx"
+        : "usercall:ret=eax;arg0=ecx;cleanup=8";
+    const std::string usercallSignature = "ret=p," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth + ";args=p," + pointerWidth + "," + pointerWidth + ",0," + pointerWidth;
+    const uintptr_t usercallArgument = pointerValue;
+    uintptr_t usercallResult = 0;
+    g_pointerTargetCalls = 0;
+    CHECK(sigilhook_invoke_native_blob(usercallTarget, usercallSignature.c_str(), usercallSignature.c_str(), usercallConvention, &usercallArgument, sizeof(usercallArgument), &usercallResult, sizeof(usercallResult)) == SIGILHOOK_OK);
+    CHECK(usercallResult == usercallArgument);
+    CHECK(g_pointerTargetCalls == 1);
+
+#if defined(_WIN32)
+    std::filesystem::path oppositePath = std::filesystem::current_path().parent_path();
+#if defined(_WIN64)
+    oppositePath /= "_build-x86/NativeBindingTestDll.dll";
+#else
+    oppositePath /= "_build-x64/NativeBindingTestDll.dll";
+#endif
+    const std::string oppositeNarrow = oppositePath.string();
+    uint64_t mismatchedModule = 0;
+    const sigilhook_status mismatchStatus = sigilhook_module_load(oppositeNarrow.c_str(), &mismatchedModule);
+    CHECK(mismatchStatus == SIGILHOOK_ERROR_ARCH_MISMATCH || mismatchStatus == SIGILHOOK_ERROR_NOT_FOUND);
+#endif
+
+    CHECK(sigilhook_module_free(module) == SIGILHOOK_OK);
+    uint64_t missingModule = 0;
+    CHECK(sigilhook_module_load("DefinitelyMissingSigilHookTest.dll", &missingModule) == SIGILHOOK_ERROR_NOT_FOUND);
+    return 0;
+}
+#endif
+
 } // namespace
 
 int main() {
     CHECK(testBasicJitDetour() == 0);
+    CHECK(testXmmRegisters() == 0);
     CHECK(testStackArgumentRedirect() == 0);
     CHECK(testAssemblyHelpers() == 0);
     CHECK(testStandardConventions() == 0);
     CHECK(testInvalidMappings() == 0);
     CHECK(testUsercall() == 0);
     CHECK(testPointerUsercall() == 0);
+#if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+    CHECK(testNativeBindingBlob() == 0);
+#endif
     return 0;
 }

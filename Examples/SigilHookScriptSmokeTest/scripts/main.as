@@ -7,6 +7,11 @@ void main() {
     verifyStatus();
     if (shSharedU64("scriptBad") != 0) return;
     verifyCrossFileSharing();
+    if (recursiveMarker() != uint64(0x5ec0112233445566)) {
+        shSetSharedU64("scriptBad", 900);
+        return;
+    }
+    verifyNativeBinding();
 }
 
 void unload() {

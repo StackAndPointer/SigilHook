@@ -196,7 +196,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-当前 C API 版本是 `0x00020007`。
+当前 C API 版本是 `0x00020009`。
 
 `sigilhook_invoke_usercall` 会按目标地址和签名缓存生成的调用桩。运行时停止时会自动清理该缓存；如果原生宿主持续使用 C ABI 而不停止运行时，应在这些目标不再使用时显式调用
 `sigilhook_clear_invoker_cache()`。
@@ -225,15 +225,15 @@ SH_ERROR_EXCEPTION
 | 分组 | 函数 |
 | --- | --- |
 | 运行时与状态 | `shIsValidHook`、`shApiVersion`、`shBuildMode`、`shIsX86`、`shIsX64`、`shPointerSize`、`shRegisterAvailable`、`shRegisterWritable`、`shClearLastError`、`shLastError`、`shLog`、`shStatusString` |
-| Hook 创建 | `shHookScript`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
+| Hook 创建 | `shHookScript`、`shHookMid`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
 | Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc` |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
 | 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
-| 寄存器与控制流 | `shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
+| 寄存器与控制流 | `shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
 | 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
 | 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
-| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall` |
+| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
 
 具体声明、参数宽度、返回值和 `out` 参数以
 [`scripts/SigilHook.ash`](../scripts/SigilHook.ash) 为准。原生集成应使用对应的
@@ -407,7 +407,8 @@ shSetReg16(SH_REG_CX, low + 1);
 - 宽度写入在架构允许时保留 frame 中高于该宽度的位。x86 物理 32 位寄存器写入会遵循硬件零扩展，因此不要依赖 x86 的高 32 位值。
 - `SP` 可读但不可写。
 - x86 不提供 `R8..R15`。
-- SIMD、段、控制和调试寄存器暂不包含在当前 API 中。
+- XMM0-7 在 x86 可用，XMM0-15 在 x64 可用。每个 XMM 值暴露两个 64 位 lane：lane 0 是低 64 位，lane 1 是高 64 位；`shXmmFloat()` 和 `shSetXmmFloat()` 使用 lane 0 操作 `float`，`shXmmDouble()` 和 `shSetXmmDouble()` 使用 lane 0 操作 `double`。x64 浮点参数会通过 XMM 同步；x86 标准浮点参数位于栈上，修改传给原函数的浮点参数使用 `shSetArg()`。
+- 段、控制和调试寄存器暂不包含在当前 API 中。
 
 ```angelscript
 uint64 flags = shFlags();
@@ -502,6 +503,29 @@ if (!shIsValidHook(hook)) {
 
 状态返回 API 返回非 `SH_OK` 时，用 `shStatusString()` 转换并记录。脚本加载或入口执行失败时，当前运行时必须视为失败：修复 `main.as`、包含错误或重复声明，然后重启运行时再加载。
 
+## 头文件转换与原生 DLL 绑定
+
+`tools/header_to_ash.py` 可以把受支持的 Windows C ABI `.h`/`.hpp` 声明转换为确定性的 `.ash` 包装函数：
+
+```powershell
+python tools\header_to_ash.py include\GameApi.h `
+  --dll GameApi.dll --output SigilHook\GameApi.ash --arch x86
+```
+
+转换器只依赖 Python 标准库，支持本地 include、简单预处理宏、typedef、enum、固定布局 POD 结构体、指针、`const char *`、Windows 宽字符串，以及 `cdecl`、`stdcall`、`fastcall`、`thiscall`、`vectorcall` 或显式 `usercall` 标注。使用 `--check` 可在 CI 中验证生成文件是否过期。
+
+模板、类方法、mangled C++ 名称、非 POD 记录、虚函数、可变参数、union、位域和未知 `#pragma pack` 布局会以文件/行/列诊断拒绝。生成的包装函数缓存 DLL 和导出查找、显式序列化结构体字段，并通过 AngelScript 异常传播原生调用失败。底层运行时接口包括 `shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes` 和 `shBufferAddress`。
+
+## Mid-hook 便捷接口
+
+`shHookMid()` 创建普通 detour；在回调中调用 `shResumeMid(handle)` 会把指令指针重定向到 trampoline 并跳过原函数入口，从而在原函数体执行前插入代码：
+
+```angelscript
+void beforeTarget() {
+    // 检查或修改状态
+    shResumeMid(g_midHook);
+}
+```
 ## 12. C ABI 与高级集成
 
 原生宿主使用 [`include/sigilhook.h`](../include/sigilhook.h)。所有地址都以 `uint64_t` 传递，句柄是不透明的 `sigilhook_handle`，边界上不暴露 C++ 异常、STL 类型或编译器对象布局。
@@ -510,7 +534,8 @@ C ABI 覆盖：
 
 - Detour、断点、IAT、EAT、VFunc 和 VTable 构造
 - 安装、移除、重装、销毁、查询和配置
-- 带参数、返回值、寄存器、标志和指令指针的 JIT 回调
+- 带参数、返回值、通用寄存器、XMM 寄存器、标志和指令指针的 JIT 回调
+- DLL 模块加载、导出解析、原生 blob 调用和位数校验
 - 内存读写/保护、特征码、反汇编、标志、FXSAVE/FXRSTOR 和可执行片段
 - 脚本运行时启动、加载、入口调用、共享值和停止
 

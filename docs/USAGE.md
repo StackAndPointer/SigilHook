@@ -199,7 +199,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-The current C API version is `0x00020007`.
+The current C API version is `0x00020009`.
 
 `sigilhook_invoke_usercall` caches generated invoker stubs by target and
 signature. Runtime shutdown clears that cache. A native host that uses the C
@@ -230,15 +230,15 @@ The standard header is the public script API. Its functions are grouped below:
 | Group | Functions |
 | --- | --- |
 | Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
-| Hook creation | `shHookScript`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
 | Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 The exact declarations, parameter widths, return values, and `out` parameters
 are defined by [`scripts/SigilHook.ash`](../scripts/SigilHook.ash). Native
@@ -413,7 +413,8 @@ Semantics:
 - Width-specific setters preserve bits above the selected width in the callback frame where the architecture permits it. A 32-bit write in a physical x86 register follows hardware zero-extension, so do not depend on an x86 upper 32-bit value.
 - `SP` is readable but read-only.
 - `R8..R15` are unavailable on x86.
-- SIMD, segment, control, and debug registers are outside the current API.
+- XMM0-7 are available on x86 and XMM0-15 on x64. Each XMM value exposes two 64-bit lanes: lane 0 is the low 64 bits and lane 1 is the high 64 bits. `shXmmFloat()` and `shSetXmmFloat()` use lane 0 for `float`; `shXmmDouble()` and `shSetXmmDouble()` use lane 0 for `double`. On x64, floating-point arguments are synchronized through XMM registers. On x86, standard floating-point arguments are stack-based, so use `shSetArg()` to change the argument passed to the original function.
+- Segment, control, and debug registers are outside the current API.
 
 ```angelscript
 uint64 flags = shFlags();
@@ -508,6 +509,29 @@ if (!shIsValidHook(hook)) {
 
 When a status-returning API returns non-`SH_OK`, convert it with `shStatusString()` and include it in the log. Treat a failed script load or entry execution as fatal for the current runtime: fix `main.as`, include errors, or duplicate declarations, then restart the runtime before loading again.
 
+## Header conversion and native DLL bindings
+
+`tools/header_to_ash.py` converts supported Windows C ABI `.h`/`.hpp` declarations into deterministic `.ash` wrappers:
+
+```powershell
+python tools\header_to_ash.py include\GameApi.h `
+  --dll GameApi.dll --output SigilHook\GameApi.ash --arch x86
+```
+
+The converter uses only the Python standard library and supports local includes, simple preprocessing macros, typedefs, enums, fixed-layout POD records, pointers, `const char *`, Windows `const wchar_t *`, and `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, or explicit `usercall` annotations. Use `--check` to verify that generated output is current in CI.
+
+Templates, class methods, mangled C++ names, non-POD records, virtual functions, variadic calls, unions, bit-fields, and unknown `#pragma pack` layouts are rejected with file/line/column diagnostics. Generated wrappers cache DLL/export lookup, serialize record fields explicitly, and raise AngelScript exceptions when native invocation fails. `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, and `shBufferAddress` expose the lower-level runtime operations.
+
+## Mid-hook convenience API
+
+`shHookMid()` creates a normal detour. Inside its callback, call `shResumeMid(handle)` to redirect the instruction pointer to the trampoline and skip the original entry, allowing code to run immediately before the original function body:
+
+```angelscript
+void beforeTarget() {
+    // inspect or update state
+    shResumeMid(g_midHook);
+}
+```
 ## 12. C ABI and advanced integration
 
 Native hosts use [`include/sigilhook.h`](../include/sigilhook.h). All addresses cross the ABI as `uint64_t`; handles are opaque `sigilhook_handle` values; no C++ exception, STL type, or compiler-specific object layout crosses the boundary.
@@ -516,7 +540,8 @@ The C ABI covers:
 
 - detour, breakpoint, IAT, EAT, VFunc, and VTable construction
 - hook install, remove, rehook, destroy, query, and configuration
-- JIT callbacks with arguments, return values, registers, flags, and instruction pointer
+- JIT callbacks with arguments, return values, GPRs, XMM registers, flags, and instruction pointer
+- module loading, export resolution, native blob invocation, and architecture validation
 - memory read/write/protection, pattern scanning, disassembly, flags, FXSAVE/FXRSTOR, and executable snippets
 - script runtime start, load, entry call, shared values, and stop
 

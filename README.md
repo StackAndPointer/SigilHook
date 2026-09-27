@@ -56,8 +56,7 @@ The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop
 
 ## Standard helper API
 
-`scripts/SigilHook.ash` exposes the complete script-facing helper surface with 129
-`sh*` functions. It includes both convenience functions that install immediately
+`scripts/SigilHook.ash` exposes the complete script-facing helper surface. It includes both convenience functions that install immediately
 and status-returning functions that preserve the underlying C ABI result:
 
 - detour creation and `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`,
@@ -65,7 +64,7 @@ and status-returning functions that preserve the underlying C ABI result:
 - software breakpoint, hardware breakpoint, IAT, EAT, VFunc, and VTable hooks
 - install, remove, rehook, destroy, state query, trampoline, debug, follow-call,
   maximum-depth, and x64 detour-scheme controls
-- argument, register, flag, return, original-call, and early-return controls
+- argument, register, XMM, flag, return, original-call, mid-hook, and early-return controls
 - 8/16/32/64-bit argument, register, return, and scalar-memory access helpers
 - callback instruction-pointer inspection and control-flow redirection
 - Zydis disassembly, hexadecimal parsing, CMP/TEST flag helpers, FXSAVE/FXRSTOR,
@@ -91,15 +90,15 @@ The complete interface is grouped as follows:
 | Group | Functions |
 | --- | --- |
 | Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
-| Hook creation | `shHookScript`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
 | Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 Exact argument types and `out` parameters are defined in
 [`scripts/SigilHook.ash`](scripts/SigilHook.ash). Native callers should use
@@ -127,8 +126,7 @@ shSetReg16(SH_REG_CX, low + 1);
 
 Register names are case-insensitive: `AX/CX/DX/BX/SP/BP/SI/DI/R8..R15`, including
 the usual `EAX/RAX`, `R8D/R8W/R8B` aliases. x86 frames expose only `AX` through
-`DI`. `SP` is read-only. SIMD, segment, control, and debug registers are not
-included. Flags are restored before an original call or final return, but values
+`DI`. `SP` is read-only. XMM0-7 are available on x86 and XMM0-15 on x64. Lane 0 is the low 64 bits and lane 1 is the high 64 bits; float and double helpers use lane 0. Segment, control, and debug registers are not included. Flags are restored before an original call or final return, but values
 such as direction and trap state should not be relied on across a language ABI.
 
 A mapped argument is available through both `shArg` and its register alias. If
@@ -203,6 +201,31 @@ shCallUsercall(target, "unsigned int", "unsigned int,unsigned int",
     "usercall:ret=rax;arg0=rcx;arg1=rdx", args, result);
 ```
 
+## Header conversion and native DLL bindings
+
+The repository includes `tools/header_to_ash.py`, a dependency-free Python 3 converter for supported Windows C ABI headers:
+
+```powershell
+python tools\header_to_ash.py include\GameApi.h `
+  --dll GameApi.dll --output SigilHook\GameApi.ash --arch x86
+```
+
+Use `--check` in CI to verify that an existing generated file is current. The converter supports scalar types, pointers, enums, `const char *`, Windows wide strings, fixed-layout POD records, local includes, and `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, or explicit `usercall` annotations. It rejects templates, mangled C++ methods, unions, bit-fields, unknown packing, variadic functions, and other constructs whose ABI cannot be confirmed, with file/line/column diagnostics.
+
+Generated wrappers cache DLL and export lookup, serialize record fields explicitly, and propagate native failures through AngelScript exceptions. At runtime use `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, and `shBufferAddress` for lower-level integration. The native module manager validates PE architecture, caches exports, reference-counts handles, and unloads modules in reverse order during `sigilhook_modules_shutdown()`.
+
+## Mid-hook and floating-point callbacks
+
+`shHookMid` creates a normal detour; inside its callback, `shResumeMid(handle)` redirects the instruction pointer to the trampoline and skips the original entry. This provides a convenient place for code that runs immediately before the original function body:
+
+```angelscript
+void beforeUpdate() {
+    // inspect or modify state
+    shResumeMid(g_midHook);
+}
+```
+
+AngelScript callbacks can read and write XMM registers with `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, and `shSetXmmDouble`. XMM0-7 are available on x86 and XMM0-15 on x64; lane 0 is the low 64 bits and lane 1 is the high 64 bits. Float and double helpers use lane 0. x64 floating-point arguments are synchronized through XMM; x86 standard floating-point arguments use `shSetArg` because they are passed on the stack.
 ## C ABI
 
 The public C interface is `include/sigilhook.h`. It exposes opaque handles and
@@ -217,7 +240,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
   and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x00020007`. All addresses cross the ABI as `uint64_t`.
+The current API version is `0x00020009`. All addresses cross the ABI as `uint64_t`.
 Hook construction returns status codes instead of throwing C++ exceptions across
 the boundary.
 
