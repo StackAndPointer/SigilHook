@@ -31,6 +31,12 @@ using StdCallFn = int (__stdcall *)(int, int);
 using FastCallFn = int (__fastcall *)(int, int);
 using ThisCallFn = int (__thiscall *)(int, int);
 using VectorCallFn = int (__vectorcall *)(int, int);
+#elif defined(_MSC_VER)
+#define TEST_THISCALL
+using StdCallFn = int (*)(int, int);
+using FastCallFn = int (*)(int, int);
+using ThisCallFn = int (*)(int, int);
+using VectorCallFn = int (__vectorcall *)(int, int);
 #else
 #define TEST_THISCALL
 using StdCallFn = int (*)(int, int);
