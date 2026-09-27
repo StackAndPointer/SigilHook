@@ -1,5 +1,6 @@
 // Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
+#include <filesystem>
 #include "include/sigilhook.h"
 
 #include "sigilhook/ErrorLog.hpp"
@@ -26,6 +27,7 @@
 #include <charconv>
 #include <condition_variable>
 #include <cstring>
+#include <cwctype>
 #include <functional>
 #include <iomanip>
 #include <memory>
@@ -194,8 +196,9 @@ void writeArgument(
 
 void writeStackArgument(
     const SIGILHOOK::ILCallback::Parameters* parameters, int32_t stackOffset, uint8_t width, uint64_t value) {
-    if (parameters->m_entryStack == 0 || width == 0 || width > sizeof(value)) return;
-    auto* destination = reinterpret_cast<uint8_t*>(parameters->m_entryStack) + stackOffset;
+    const uintptr_t entryStack = static_cast<uintptr_t>(parameters->m_entryStack);
+    if (entryStack == 0 || width == 0 || width > sizeof(value)) return;
+    auto* destination = reinterpret_cast<uint8_t*>(entryStack) + stackOffset;
     std::memcpy(destination, &value, width);
 }
 
@@ -235,6 +238,14 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
         registers->registers[index] = 0;
     }
     registers->write_mask = 0;
+    auto* xmm = reinterpret_cast<sigilhook_xmm_context*>(
+        const_cast<uint64_t*>(&parameters->m_xmm[0][0]));
+    xmm->write_mask = 0;
+    const size_t availableXmm = currentMode() == SIGILHOOK::Mode::x64 ? SIGILHOOK_XMM_COUNT : 8;
+    for (size_t index = availableXmm; index < SIGILHOOK_XMM_COUNT; ++index) {
+        xmm->values[index][0] = 0;
+        xmm->values[index][1] = 0;
+    }
 
     std::vector<uint64_t> arguments(count);
     std::vector<uint64_t> originalArguments(count);
@@ -251,17 +262,19 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
     }
 
     sigilhook_call_frame frame{
-        arguments.data(), count, &result->m_retVal, &result->m_callOriginal, &result->m_overrideReturn, registers
-        , record->target, &result->m_redirectAddress, &result->m_redirect
+        arguments.data(), count, &result->m_retVal, &result->m_callOriginal, &result->m_overrideReturn, registers,
+        record->target, &result->m_redirectAddress, &result->m_redirect, xmm
     };
     record->userCallback(&frame, record->userData);
     if (result->m_redirect != 0 && result->m_redirectAddress == 0) {
         result->m_redirect = 0;
     }
     if (result->m_redirect != 0) result->m_callOriginal = 0;
+    bool argumentsChanged = false;
 
     for (uint8_t index = 0; index < count; ++index) {
         const uint8_t width = index < record->argumentWidths.size() ? record->argumentWidths[index] : sizeof(uint64_t);
+        if (arguments[index] != originalArguments[index]) argumentsChanged = true;
         if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Register) {
             const uint8_t reg = layout.arguments[index].reg;
             const uint64_t bit = uint64_t{1} << reg;
@@ -269,19 +282,42 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
             const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
             if ((registers->write_mask & bit) != 0 && arguments[index] == originalArguments[index]) {
                 arguments[index] = registers->registers[reg] & mask;
+                argumentsChanged = true;
             } else {
                 registers->registers[reg] = arguments[index] & mask;
             }
+        } else if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::XmmRegister) {
+            const uint8_t reg = layout.arguments[index].reg;
+            const uint64_t bit = uint64_t{1} << reg;
+            const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
+            if ((xmm->write_mask & bit) != 0 && arguments[index] == originalArguments[index]) {
+                arguments[index] = xmm->values[reg][0] & mask;
+                argumentsChanged = true;
+            } else {
+                const uint64_t lane = xmm->values[reg][0];
+                xmm->values[reg][0] = width == sizeof(uint64_t)
+                    ? arguments[index]
+                    : (lane & ~mask) | (arguments[index] & mask);
+            }
         } else if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Stack) {
             writeStackArgument(parameters, layout.arguments[index].stackOffset, width, arguments[index]);
+            if (arguments[index] != originalArguments[index]) argumentsChanged = true;
         }
         writeArgument(parameters, index, width, arguments[index]);
+        if (arguments[index] != originalArguments[index]) argumentsChanged = true;
     }
 
     if (layout.returnRegister >= 0) {
         const uint8_t reg = static_cast<uint8_t>(layout.returnRegister);
         if ((registers->write_mask & (uint64_t{1} << reg)) != 0) {
             result->m_retVal = registers->registers[reg];
+            result->m_overrideReturn = 1;
+        }
+    } else if (layout.returnXmmRegister >= 0) {
+        const uint8_t reg = static_cast<uint8_t>(layout.returnXmmRegister);
+        if (result->m_overrideReturn == 0 && (result->m_callOriginal == 0 || !argumentsChanged) &&
+            (xmm->write_mask & (uint64_t{1} << reg)) != 0) {
+            result->m_retVal = xmm->values[reg][0];
             result->m_overrideReturn = 1;
         }
     }
@@ -415,7 +451,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020007;
+    return 0x00020009;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -1057,6 +1093,8 @@ sigilhook_status SIGILHOOK_CALL sigilhook_parse_hex(const char* text, uint64_t* 
     return SIGILHOOK_OK;
 }
 
+} // extern "C"
+
 namespace {
 uint64_t currentEflags() {
 #if defined(_MSC_VER)
@@ -1103,6 +1141,315 @@ sigilhook_status computeFlags(
 }
 } // namespace
 
+namespace {
+struct NativeValueDesc {
+    char kind = 'v';
+    uint8_t width = 0;
+    uint8_t alignment = 1;
+    uint32_t offset = 0;
+    uint32_t size = 0;
+};
+
+struct NativeSignature {
+    NativeValueDesc returnValue{};
+    std::vector<NativeValueDesc> arguments;
+};
+
+std::string trimNative(const std::string& value) {
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool parseNativeUnsigned(const std::string& value, uint32_t* out) {
+    if (value.empty() || out == nullptr) return false;
+    uint32_t result = 0;
+    for (char ch : value) {
+        if (ch < '0' || ch > '9' || result > (UINT32_MAX - static_cast<uint32_t>(ch - '0')) / 10) return false;
+        result = result * 10 + static_cast<uint32_t>(ch - '0');
+    }
+    *out = result;
+    return true;
+}
+
+bool parseNativeValue(const std::string& text, NativeValueDesc* out) {
+    if (out == nullptr) return false;
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t end = text.find(',', start);
+        fields.push_back(trimNative(text.substr(start, end == std::string::npos ? std::string::npos : end - start)));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (fields.size() != 5 || fields[0].size() != 1) return false;
+    const char kind = fields[0][0];
+    if (!strchr("vidupr", kind) && kind != 'f' && kind != 'd' && kind != 'w' && kind != 's') return false;
+    uint32_t width = 0, alignment = 0, offset = 0, size = 0;
+    if (!parseNativeUnsigned(fields[1], &width) || !parseNativeUnsigned(fields[2], &alignment) ||
+        !parseNativeUnsigned(fields[3], &offset) || !parseNativeUnsigned(fields[4], &size)) return false;
+    if (alignment == 0 || alignment > 64 || width > 64 || size > (1u << 20) || offset > (1u << 20)) return false;
+    out->kind = kind;
+    out->width = static_cast<uint8_t>(width);
+    out->alignment = static_cast<uint8_t>(alignment);
+    out->offset = offset;
+    out->size = size;
+    return true;
+}
+
+bool parseNativeSignature(const std::string& text, NativeSignature* out) {
+    if (out == nullptr) return false;
+    const size_t argsMarker = text.find(";args=");
+    if (argsMarker == std::string::npos || text.compare(0, 4, "ret=") != 0) return false;
+    if (!parseNativeValue(text.substr(4, argsMarker - 4), &out->returnValue)) return false;
+    out->arguments.clear();
+    const std::string args = text.substr(argsMarker + 6);
+    if (args.empty()) return true;
+    size_t start = 0;
+    while (start <= args.size()) {
+        const size_t end = args.find('|', start);
+        NativeValueDesc value{};
+        if (!parseNativeValue(args.substr(start, end == std::string::npos ? std::string::npos : end - start), &value)) return false;
+        out->arguments.push_back(value);
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+
+bool sameNativeValue(const NativeValueDesc& left, const NativeValueDesc& right) {
+    return left.kind == right.kind && left.width == right.width &&
+        left.alignment == right.alignment && left.offset == right.offset && left.size == right.size;
+}
+
+bool sameNativeSignature(const NativeSignature& left, const NativeSignature& right) {
+    if (!sameNativeValue(left.returnValue, right.returnValue) || left.arguments.size() != right.arguments.size()) return false;
+    for (size_t index = 0; index < left.arguments.size(); ++index) {
+        if (!sameNativeValue(left.arguments[index], right.arguments[index])) return false;
+    }
+    return true;
+}
+
+asmjit::TypeId nativeTypeId(const NativeValueDesc& value) {
+    switch (value.kind) {
+    case 'f': return value.width == 8 ? asmjit::TypeId::kFloat64 : asmjit::TypeId::kFloat32;
+    case 'd': return asmjit::TypeId::kFloat64;
+    case 'p': case 's': case 'w': return asmjit::TypeId::kUIntPtr;
+    case 'u':
+        if (value.width == 1) return asmjit::TypeId::kUInt8;
+        if (value.width == 2) return asmjit::TypeId::kUInt16;
+        if (value.width == 4) return asmjit::TypeId::kUInt32;
+        return asmjit::TypeId::kUInt64;
+    case 'i':
+        if (value.width == 1) return asmjit::TypeId::kInt8;
+        if (value.width == 2) return asmjit::TypeId::kInt16;
+        if (value.width == 4) return asmjit::TypeId::kInt32;
+        return asmjit::TypeId::kInt64;
+    default:
+        if (value.width == 1) return asmjit::TypeId::kUInt8;
+        if (value.width == 2) return asmjit::TypeId::kUInt16;
+        if (value.width == 4) return asmjit::TypeId::kUInt32;
+        return asmjit::TypeId::kUInt64;
+    }
+}
+
+bool nativeRecordRegisterSize(uint32_t width) {
+    return width == 1 || width == 2 || width == 4 || width == 8;
+}
+
+bool nativeIsVector(const NativeValueDesc& value) {
+    return value.kind == 'f' || value.kind == 'd';
+}
+
+uint64_t readNativeBlobValue(const void* blob, size_t blobSize, const NativeValueDesc& value) {
+    if (blob == nullptr || value.offset > blobSize || value.size > blobSize - value.offset || value.size == 0) return 0;
+    uint64_t result = 0;
+    std::memcpy(&result, static_cast<const uint8_t*>(blob) + value.offset, std::min<size_t>(value.size, sizeof(result)));
+    return result;
+}
+
+void writeNativeBlobValue(void* blob, size_t blobSize, const NativeValueDesc& value, uint64_t data) {
+    if (blob == nullptr || value.offset > blobSize || value.size > blobSize - value.offset || value.size == 0) return;
+    std::memcpy(static_cast<uint8_t*>(blob) + value.offset, &data, std::min<size_t>(value.size, sizeof(data)));
+}
+
+struct NativeInvokerRecord {
+    void* allocation = nullptr;
+    size_t size = 0;
+};
+std::mutex g_nativeInvokerMutex;
+std::unordered_map<std::string, NativeInvokerRecord> g_nativeInvokers;
+
+void freeNativeInvoker(NativeInvokerRecord& record) {
+#if defined(_WIN32)
+    if (record.allocation != nullptr) VirtualFree(record.allocation, 0, MEM_RELEASE);
+#endif
+    record = {};
+}
+
+uint64_t allocateNativeCode(asmjit::CodeHolder& code) {
+    if (code.flatten() != asmjit::kErrorOk || code.resolveCrossSectionFixups() != asmjit::kErrorOk) return 0;
+    const size_t size = code.codeSize();
+    if (size == 0) return 0;
+#if defined(_WIN32)
+    void* memory = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (memory == nullptr) return 0;
+    if (code.relocateToBase(reinterpret_cast<uint64_t>(memory)) != asmjit::kErrorOk) {
+        VirtualFree(memory, 0, MEM_RELEASE);
+        return 0;
+    }
+    code.copyFlattenedData(static_cast<uint8_t*>(memory), size);
+    return reinterpret_cast<uint64_t>(memory);
+#else
+    return 0;
+#endif
+}
+
+struct NativeTargetArg {
+    NativeValueDesc source{};
+    asmjit::TypeId type = asmjit::TypeId::kVoid;
+    uint32_t sourceOffset = 0;
+    bool pointerToSource = false;
+    bool hiddenReturn = false;
+};
+
+bool buildNativeInvoker(const NativeSignature& signature, const std::string& convention, uint64_t target, uint64_t* outAddress) {
+    if (outAddress == nullptr || target == 0) return false;
+    if (convention.rfind("usercall", 0) == 0) return false;
+    asmjit::CallConvId callConv = asmjit::CallConvId::kCDecl;
+    const std::string normalized = trimNative(convention);
+    if (normalized == "stdcall" || normalized == "__stdcall") callConv = asmjit::CallConvId::kStdCall;
+    else if (normalized == "fastcall" || normalized == "__fastcall") callConv = asmjit::CallConvId::kFastCall;
+    else if (normalized == "thiscall" || normalized == "__thiscall") callConv = asmjit::CallConvId::kThisCall;
+    else if (normalized == "vectorcall" || normalized == "__vectorcall") callConv = asmjit::CallConvId::kVectorCall;
+    else if (!normalized.empty() && normalized != "cdecl" && normalized != "__cdecl") return false;
+
+    const bool hiddenReturn = signature.returnValue.kind == 'r' &&
+        (currentMode() == SIGILHOOK::Mode::x64
+            ? !nativeRecordRegisterSize(signature.returnValue.width)
+            : signature.returnValue.width > 4 && signature.returnValue.width != 8);
+    const asmjit::TypeId returnTypeId = hiddenReturn || signature.returnValue.kind == 'v'
+        ? asmjit::TypeId::kVoid : nativeTypeId(signature.returnValue);
+    asmjit::FuncSignature targetSignature(callConv, asmjit::FuncSignature::kNoVarArgs, returnTypeId);
+    std::vector<NativeTargetArg> plans;
+    if (hiddenReturn) {
+        targetSignature.addArg(asmjit::TypeId::kUIntPtr);
+        NativeTargetArg hidden{};
+        hidden.hiddenReturn = true;
+        plans.push_back(hidden);
+    }
+    for (const NativeValueDesc& argument : signature.arguments) {
+        if (argument.kind == 'r') {
+            const bool passedByReference = currentMode() == SIGILHOOK::Mode::x64 &&
+                !nativeRecordRegisterSize(argument.width);
+            if (passedByReference) {
+                targetSignature.addArg(asmjit::TypeId::kUIntPtr);
+                NativeTargetArg plan{argument, asmjit::TypeId::kUIntPtr, argument.offset, true, false};
+                plans.push_back(plan);
+                continue;
+            }
+            uint32_t consumed = 0;
+            while (consumed < argument.width) {
+                const uint32_t chunk = std::min<uint32_t>(currentMode() == SIGILHOOK::Mode::x86 ? 4 : 8, argument.width - consumed);
+                NativeValueDesc chunkDesc = argument;
+                chunkDesc.kind = 'u';
+                chunkDesc.width = static_cast<uint8_t>(chunk);
+                chunkDesc.size = chunk;
+                const asmjit::TypeId type = nativeTypeId(chunkDesc);
+                targetSignature.addArg(type);
+                plans.push_back({chunkDesc, type, argument.offset + consumed, false, false});
+                consumed += chunk;
+            }
+            continue;
+        }
+        const asmjit::TypeId type = nativeTypeId(argument);
+        targetSignature.addArg(type);
+        plans.push_back({argument, type, argument.offset, false, false});
+    }
+
+    asmjit::Environment environment = asmjit::Environment::host();
+    environment.setArch(asmjit::Arch::kHost);
+    asmjit::CodeHolder code;
+    if (code.init(environment) != asmjit::kErrorOk) return false;
+    asmjit::StringLogger logger;
+    code.setLogger(&logger);
+    asmjit::x86::Compiler compiler(&code);
+    asmjit::x86::Gp argumentBase = compiler.newUIntPtr("argumentBase");
+    asmjit::x86::Gp returnBase = compiler.newUIntPtr("returnBase");
+    asmjit::FuncNode* function = compiler.addFunc(asmjit::FuncSignature::build<void, const void*, void*>());
+    function->setArg(0, argumentBase);
+    function->setArg(1, returnBase);
+
+    std::vector<asmjit::Reg> preparedArgs;
+    preparedArgs.reserve(plans.size());
+    for (const NativeTargetArg& plan : plans) {
+        if (plan.hiddenReturn) {
+            asmjit::x86::Gp pointer = compiler.newUIntPtr();
+            compiler.mov(pointer, returnBase);
+            preparedArgs.push_back(pointer);
+            continue;
+        }
+        asmjit::x86::Mem source = asmjit::x86::ptr(argumentBase, static_cast<int32_t>(plan.sourceOffset));
+        source.setSize(plan.source.size == 0 ? plan.source.width : plan.source.size);
+        if (plan.pointerToSource) {
+            asmjit::x86::Gp pointer = compiler.newUIntPtr();
+            compiler.lea(pointer, asmjit::x86::ptr(argumentBase, static_cast<int32_t>(plan.sourceOffset)));
+            preparedArgs.push_back(pointer);
+        } else if (nativeIsVector(plan.source)) {
+            asmjit::x86::Vec value = compiler.newXmm();
+            if (plan.source.width == 8) compiler.movq(value, source); else compiler.movd(value, source);
+            preparedArgs.push_back(value);
+        } else {
+            asmjit::x86::Gp value = compiler.newGp(plan.type);
+            compiler.mov(value, source);
+            preparedArgs.push_back(value);
+        }
+    }
+    asmjit::InvokeNode* invocation = nullptr;
+    if (compiler.invoke(&invocation, asmjit::Imm(static_cast<int64_t>(target)), targetSignature) != asmjit::kErrorOk) return false;
+    for (size_t index = 0; index < preparedArgs.size(); ++index) invocation->setArg(index, preparedArgs[index]);
+
+    if (!hiddenReturn && signature.returnValue.kind != 'v' && signature.returnValue.width != 0 && invocation->hasRet()) {
+        const size_t count = invocation->detail().retPack().count();
+        for (size_t index = 0; index < count; ++index) {
+            const asmjit::TypeId resultType = count == 1
+                ? nativeTypeId(signature.returnValue)
+                : asmjit::TypeId::kUInt32;
+            asmjit::x86::Gp returnedGp = compiler.newGp(resultType);
+            invocation->setRet(index, returnedGp);
+            asmjit::Operand value = returnedGp;
+            if (!value.isReg()) continue;
+            uint32_t storeOffset = 0;
+            uint32_t storeWidth = signature.returnValue.width;
+            if (count > 1) {
+                storeOffset = static_cast<uint32_t>(index * 4);
+                storeWidth = std::min<uint32_t>(4, signature.returnValue.width - storeOffset);
+            }
+            if (storeWidth == 0 || storeOffset >= signature.returnValue.width) continue;
+            asmjit::x86::Mem destination = asmjit::x86::ptr(returnBase, static_cast<int32_t>(storeOffset));
+            destination.setSize(storeWidth);
+            const asmjit::Reg returnedRegister = value.as<asmjit::Reg>();
+            if (returnedRegister.isGp()) {
+                compiler.mov(destination, value.as<asmjit::x86::Gp>());
+            } else if (returnedRegister.isVec() && nativeIsVector(signature.returnValue)) {
+                if (storeWidth == 8) compiler.movq(destination, value.as<asmjit::x86::Vec>());
+                else compiler.movd(destination, value.as<asmjit::x86::Vec>());
+            }
+        }
+    }
+    compiler.ret();
+    if (compiler.endFunc() != asmjit::kErrorOk || compiler.finalize() != asmjit::kErrorOk) return false;
+    const uint64_t address = allocateNativeCode(code);
+    if (address == 0) return false;
+    NativeInvokerRecord record{reinterpret_cast<void*>(static_cast<uintptr_t>(address)), code.codeSize()};
+    *outAddress = address;
+    return true;
+}
+
+} // namespace
+
+extern "C" {
 sigilhook_status SIGILHOOK_CALL sigilhook_compute_cmp_flags(
     uint64_t left, uint64_t right, uint8_t operandSize, uint64_t* outFlags) {
     return computeFlags(left, right, operandSize, false, outFlags);
@@ -1219,11 +1566,298 @@ sigilhook_status SIGILHOOK_CALL sigilhook_invoke_usercall(
 }
 
 sigilhook_status SIGILHOOK_CALL sigilhook_clear_invoker_cache(void) {
-    std::unordered_map<std::string, InvokerRecord> discarded;
+    std::unordered_map<std::string, InvokerRecord> discardedUsercall;
     {
         std::lock_guard lock(g_invokerMutex);
-        discarded.swap(g_invokers);
+        discardedUsercall.swap(g_invokers);
     }
+    std::unordered_map<std::string, NativeInvokerRecord> discardedNative;
+    {
+        std::lock_guard lock(g_nativeInvokerMutex);
+        discardedNative.swap(g_nativeInvokers);
+    }
+    for (auto& entry : discardedNative) freeNativeInvoker(entry.second);
     return SIGILHOOK_OK;
 }
 } // extern "C"
+#if defined(_WIN32)
+struct NativeModuleRecord { HMODULE handle = nullptr; uint32_t references = 0; };
+std::mutex g_nativeModuleMutex;
+std::unordered_map<std::wstring, NativeModuleRecord> g_nativeModules;
+std::unordered_map<std::string, uint64_t> g_nativeAddressCache;
+std::mutex g_nativeAddressMutex;
+uint64_t lookupNativeAddress(const std::string& key) {
+    std::lock_guard lock(g_nativeAddressMutex);
+    const auto iterator = g_nativeAddressCache.find(key);
+    return iterator == g_nativeAddressCache.end() ? 0 : iterator->second;
+}
+std::wstring nativeLower(std::wstring value) { std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); }); return value; }
+std::filesystem::path nativeSelfDirectory() { HMODULE self = nullptr; if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&sigilhook_api_version), &self) || self == nullptr) return {}; wchar_t buffer[32768]{}; const DWORD length = GetModuleFileNameW(self, buffer, static_cast<DWORD>(std::size(buffer))); if (length == 0 || length >= std::size(buffer)) return {}; return std::filesystem::path(buffer).parent_path(); }
+std::filesystem::path resolveNativeModulePath(const char* dllName) {
+    std::filesystem::path path;
+    if (dllName != nullptr && *dllName != '\0') {
+        path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(dllName)));
+    }
+    if (path.is_relative()) path = nativeSelfDirectory() / path;
+    std::error_code error;
+    const auto canonical = std::filesystem::weakly_canonical(path, error);
+    return error ? path.lexically_normal() : canonical;
+}
+bool nativePeCompatible(HMODULE handle) {
+    if (handle == nullptr) return false;
+    const auto* base = reinterpret_cast<const uint8_t*>(handle);
+    const uint16_t dosSignature = *reinterpret_cast<const uint16_t*>(base);
+    if (dosSignature != IMAGE_DOS_SIGNATURE) return false;
+    const uint32_t ntOffset = *reinterpret_cast<const uint32_t*>(base + 0x3c);
+    if (ntOffset > 0x10000000u || ntOffset + 6 > 0x10000000u) return false;
+    const auto* nt = base + ntOffset;
+    if (*reinterpret_cast<const uint32_t*>(nt) != IMAGE_NT_SIGNATURE) return false;
+    const uint16_t machine = *reinterpret_cast<const uint16_t*>(nt + 4);
+#if defined(_WIN64)
+    return machine == IMAGE_FILE_MACHINE_AMD64;
+#else
+    return machine == IMAGE_FILE_MACHINE_I386;
+#endif
+}
+#endif
+std::string nativeTypeName(const NativeValueDesc& value) { if (value.kind == 'v') return "void"; if (value.kind == 'p' || value.kind == 's' || value.kind == 'w') return "void*"; if (value.kind == 'f') return value.width == 8 ? "double" : "float"; if (value.kind == 'd') return "double"; if (value.kind == 'r') return value.width <= 4 ? "uint32" : "uint64"; const char* prefix = value.kind == 'i' ? "int" : "uint"; return std::string(prefix) + std::to_string(value.width * 8); }
+#include <filesystem>
+#include <cstdlib>
+#include <cstdio>
+extern "C" {
+#if defined(_WIN32)
+sigilhook_status SIGILHOOK_CALL sigilhook_module_load(const char* dll_name, uint64_t* out_module) {
+    if (dll_name == nullptr || *dll_name == '\0' || out_module == nullptr) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "DLL name and module output are required");
+    const std::filesystem::path path = resolveNativeModulePath(dll_name);
+    if (path.empty()) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Cannot resolve DLL path");
+#if defined(_WIN32)
+    DWORD binaryType = 0;
+    if (GetBinaryTypeW(path.c_str(), &binaryType)) {
+#if defined(_WIN64)
+        const DWORD expectedType = 6; // SCS_64BIT_BINARY
+#else
+        const DWORD expectedType = 0; // SCS_32BIT_BINARY
+#endif
+        if (binaryType != expectedType) return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "DLL architecture does not match SigilHook: " + path.string());
+    }
+#endif
+    const std::wstring key = nativeLower(path.wstring());
+    {
+        std::lock_guard lock(g_nativeModuleMutex);
+        const auto existing = g_nativeModules.find(key);
+        if (existing != g_nativeModules.end()) {
+            if (existing->second.references == UINT32_MAX) return fail(SIGILHOOK_ERROR_BUSY, "DLL reference count overflow");
+            ++existing->second.references;
+            *out_module = reinterpret_cast<uint64_t>(existing->second.handle);
+            return SIGILHOOK_OK;
+        }
+    }
+    HMODULE handle = LoadLibraryW(path.c_str());
+    if (handle == nullptr) return fail(SIGILHOOK_ERROR_NOT_FOUND, "LoadLibraryW failed for " + path.string());
+    if (!nativePeCompatible(handle)) {
+        FreeLibrary(handle);
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "DLL architecture does not match SigilHook");
+    }
+    {
+        std::lock_guard lock(g_nativeModuleMutex);
+        const auto inserted = g_nativeModules.emplace(key, NativeModuleRecord{handle, 1});
+        if (!inserted.second) {
+            FreeLibrary(handle);
+            ++inserted.first->second.references;
+            handle = inserted.first->second.handle;
+        }
+    }
+    *out_module = reinterpret_cast<uint64_t>(handle);
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_module_export(uint64_t module, const char* export_name, uint64_t* out_address) {
+    if (module == 0 || export_name == nullptr || *export_name == '\0' || out_address == nullptr) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Module, export name, and output are required");
+    HMODULE handle = reinterpret_cast<HMODULE>(static_cast<uintptr_t>(module));
+    FARPROC address = GetProcAddress(handle, export_name);
+        if (address == nullptr) {
+            for (uint32_t bytes = 0; bytes <= 128 && address == nullptr; ++bytes) {
+                const std::string decorated = "_" + std::string(export_name) + "@" + std::to_string(bytes);
+                address = GetProcAddress(handle, decorated.c_str());
+            }
+        }
+        if (address == nullptr) address = GetProcAddress(handle, ("_" + std::string(export_name)).c_str());
+        if (address == nullptr) {
+            for (uint32_t bytes = 0; bytes <= 256 && address == nullptr; ++bytes) {
+                const std::string decorated = std::string(export_name) + "@@" + std::to_string(bytes);
+                address = GetProcAddress(handle, decorated.c_str());
+            }
+        }
+        if (address == nullptr) {
+            for (uint32_t bytes = 0; bytes <= 128 && address == nullptr; ++bytes) {
+                const std::string decorated = "@" + std::string(export_name) + "@" + std::to_string(bytes);
+                address = GetProcAddress(handle, decorated.c_str());
+            }
+        }
+    if (address == nullptr) return fail(SIGILHOOK_ERROR_NOT_FOUND, "DLL export not found: " + std::string(export_name));
+    *out_address = reinterpret_cast<uint64_t>(address);
+    return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_module_free(uint64_t module) {
+    if (module == 0) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Module handle is required");
+    std::lock_guard lock(g_nativeModuleMutex);
+    for (auto iterator = g_nativeModules.begin(); iterator != g_nativeModules.end(); ++iterator) {
+        if (reinterpret_cast<uint64_t>(iterator->second.handle) != module) continue;
+        if (iterator->second.references > 1) {
+            --iterator->second.references;
+            return SIGILHOOK_OK;
+        }
+        FreeLibrary(iterator->second.handle);
+        g_nativeModules.erase(iterator);
+        std::unordered_map<std::string, uint64_t> discardedAddresses;
+        {
+            std::lock_guard addressLock(g_nativeAddressMutex);
+            discardedAddresses.swap(g_nativeAddressCache);
+        }
+        return SIGILHOOK_OK;
+    }
+    return fail(SIGILHOOK_ERROR_NOT_FOUND, "Module was not loaded by SigilHook");
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_modules_shutdown(void) {
+    std::unordered_map<std::string, uint64_t> addresses;
+    {
+        std::lock_guard lock(g_nativeAddressMutex);
+        addresses.swap(g_nativeAddressCache);
+    }
+    std::unordered_map<std::wstring, NativeModuleRecord> modules;
+    {
+        std::lock_guard lock(g_nativeModuleMutex);
+        modules.swap(g_nativeModules);
+    }
+    for (auto& entry : modules) FreeLibrary(entry.second.handle);
+    return SIGILHOOK_OK;
+}
+}
+
+extern "C" {
+sigilhook_status SIGILHOOK_CALL sigilhook_native_address(const char* dll_name, const char* export_name, const char* call_convention, uint64_t* out_address) {
+    if (dll_name == nullptr || export_name == nullptr || call_convention == nullptr || out_address == nullptr) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "DLL, export, convention, and address output are required");
+    const std::string key = std::string(dll_name) + "|" + export_name + "|" + call_convention;
+    if (const uint64_t cached = lookupNativeAddress(key); cached != 0) {
+        *out_address = cached;
+        return SIGILHOOK_OK;
+    }
+    uint64_t module = 0;
+    sigilhook_status status = sigilhook_module_load(dll_name, &module);
+    if (status != SIGILHOOK_OK) return status;
+    status = sigilhook_module_export(module, export_name, out_address);
+    if (status != SIGILHOOK_OK) {
+        sigilhook_module_free(module);
+        return status;
+    }
+    {
+        std::lock_guard lock(g_nativeAddressMutex);
+        const auto inserted = g_nativeAddressCache.emplace(key, *out_address);
+        if (!inserted.second) *out_address = inserted.first->second;
+    }
+    return SIGILHOOK_OK;
+}
+}
+#else
+sigilhook_status SIGILHOOK_CALL sigilhook_module_load(const char*, uint64_t*) { return fail(SIGILHOOK_ERROR_UNSUPPORTED, "DLL loading is Windows-only"); }
+sigilhook_status SIGILHOOK_CALL sigilhook_module_export(uint64_t, const char*, uint64_t*) { return fail(SIGILHOOK_ERROR_UNSUPPORTED, "DLL loading is Windows-only"); }
+sigilhook_status SIGILHOOK_CALL sigilhook_module_free(uint64_t) { return fail(SIGILHOOK_ERROR_UNSUPPORTED, "DLL loading is Windows-only"); }
+sigilhook_status SIGILHOOK_CALL sigilhook_modules_shutdown(void) { return SIGILHOOK_OK; }
+sigilhook_status SIGILHOOK_CALL sigilhook_native_address(const char*, const char*, const char*, uint64_t*) { return fail(SIGILHOOK_ERROR_UNSUPPORTED, "DLL loading is Windows-only"); }
+#endif
+
+extern "C" {
+sigilhook_status SIGILHOOK_CALL sigilhook_invoke_native_blob(
+    uint64_t target, const char* return_signature, const char* argument_signature,
+    const char* call_convention, const void* argument_blob, size_t argument_size,
+    void* return_blob, size_t return_size) {
+    if (target == 0 || return_signature == nullptr || call_convention == nullptr ||
+        (argument_size != 0 && argument_blob == nullptr) || (return_size != 0 && return_blob == nullptr)) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Native target, signatures, and blobs are required");
+    }
+    NativeSignature signature{};
+    if (!parseNativeSignature(return_signature, &signature)) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Malformed native signature");
+    NativeSignature argumentSignature{};
+    if (argument_signature == nullptr || !parseNativeSignature(argument_signature, &argumentSignature) ||
+        !sameNativeSignature(signature, argumentSignature)) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Return and argument signatures do not match");
+    }
+    if (signature.returnValue.size != 0 && (return_blob == nullptr || return_size < signature.returnValue.size)) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Return blob is too small");
+    for (const NativeValueDesc& argument : signature.arguments) {
+        if (argument.offset > argument_size || argument.size > argument_size - argument.offset) return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Argument blob is too small");
+    }
+    const std::string convention = trimNative(call_convention);
+    if (convention.rfind("usercall", 0) == 0) {
+        if (signature.returnValue.kind == 'f' || signature.returnValue.kind == 'd') return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Floating-point usercall returns are not supported");
+        std::vector<uint64_t> values;
+        std::vector<std::string> types;
+        for (const NativeValueDesc& argument : signature.arguments) {
+            if (argument.kind == 'f' || argument.kind == 'd') return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Floating-point usercall arguments are not supported");
+            if (argument.kind == 'r' && argument.width > 8) return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Wide record usercall arguments are not supported");
+            values.push_back(readNativeBlobValue(argument_blob, argument_size, argument));
+            types.push_back(nativeTypeName(argument));
+        }
+        std::string parameterText;
+        for (size_t index = 0; index < types.size(); ++index) {
+            if (index != 0) parameterText += ',';
+            parameterText += types[index];
+        }
+        uint64_t result = 0;
+        const sigilhook_status status = sigilhook_invoke_usercall(target, nativeTypeName(signature.returnValue).c_str(), parameterText.c_str(), convention.c_str(), values.data(), values.size(), &result);
+        if (status == SIGILHOOK_OK) writeNativeBlobValue(return_blob, return_size, signature.returnValue, result);
+        return status;
+    }
+
+    const std::string key = std::to_string(target) + "|" + return_signature + "|" + convention;
+    uint64_t invoker = 0;
+    NativeInvokerRecord record{};
+    {
+        std::lock_guard lock(g_nativeInvokerMutex);
+        const auto existing = g_nativeInvokers.find(key);
+        if (existing != g_nativeInvokers.end()) invoker = reinterpret_cast<uint64_t>(existing->second.allocation);
+    }
+    if (invoker == 0) {
+        if (!buildNativeInvoker(signature, convention, target, &invoker)) return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Native signature cannot be generated for this ABI");
+        record.allocation = reinterpret_cast<void*>(static_cast<uintptr_t>(invoker));
+        record.size = 0;
+        std::lock_guard lock(g_nativeInvokerMutex);
+        g_nativeInvokers.emplace(key, record);
+    }
+    const auto invoke = reinterpret_cast<void(*)(const void*, void*)>(static_cast<uintptr_t>(invoker));
+    invoke(argument_blob, return_blob);
+    return SIGILHOOK_OK;
+}
+} // extern "C"
+extern "C" {
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_xmm(
+    const sigilhook_call_frame* frame, uint8_t reg, uint8_t lane, uint64_t* outValue) {
+    if (frame == nullptr || frame->xmm == nullptr || outValue == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame, XMM context, and output are required");
+    }
+    if (reg >= SIGILHOOK_XMM_COUNT || lane >= 2) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "XMM register or lane is out of range");
+    }
+    if (currentMode() != SIGILHOOK::Mode::x64 && reg >= 8) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "XMM8-XMM15 are unavailable in x86 callback frames");
+    }
+    *outValue = frame->xmm->values[reg][lane];
+    return SIGILHOOK_OK;
+}
+sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_xmm(
+    sigilhook_call_frame* frame, uint8_t reg, uint8_t lane, uint64_t value) {
+    if (frame == nullptr || frame->xmm == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Frame and XMM context are required");
+    }
+    if (reg >= SIGILHOOK_XMM_COUNT || lane >= 2) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "XMM register or lane is out of range");
+    }
+    if (currentMode() != SIGILHOOK::Mode::x64 && reg >= 8) {
+        return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "XMM8-XMM15 are unavailable in x86 callback frames");
+    }
+    frame->xmm->values[reg][lane] = value;
+    frame->xmm->write_mask |= uint64_t{1} << reg;
+    return SIGILHOOK_OK;
+}
+}

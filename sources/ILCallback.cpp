@@ -628,17 +628,32 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 		if (isGpFuncValue(value)) {
 			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::Register;
 			m_callLayout.arguments[argIndex].reg = static_cast<uint8_t>(value.regId());
+		} else if (value.isReg()) {
+			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::XmmRegister;
+			m_callLayout.arguments[argIndex].reg = static_cast<uint8_t>(value.regId());
 		} else if (value.isStack()) {
 			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::Stack;
 			m_callLayout.arguments[argIndex].stackOffset = value.stackOffset();
 		}
 	}
 	m_callLayout.returnRegister = -1;
+	m_callLayout.returnXmmRegister = -1;
 	if (func->detail().hasRet() && func->detail().ret().isReg()) {
 		const auto& ret = func->detail().ret();
 		if (ret.regType() == asmjit::RegType::kGp32 || ret.regType() == asmjit::RegType::kGp64) {
 			m_callLayout.returnRegister = static_cast<int>(ret.regId());
+		} else if (ret.regType() >= asmjit::RegType::kVec8 &&
+			ret.regType() <= asmjit::RegType::kVec512 &&
+			ret.regId() < SIGILHOOK_XMM_COUNT) {
+			// Scalar floating-point returns use an XMM register on x64.
+			m_callLayout.returnXmmRegister = static_cast<int>(ret.regId());
 		}
+	}
+	if (arch == asmjit::Arch::kX86 && asmjit::TypeUtils::isFloat(sig.ret()) &&
+		m_callLayout.returnRegister < 0 && m_callLayout.returnXmmRegister < 0) {
+		// x86 scalar returns use x87 ST(0), while the callback frame exposes
+		// the corresponding value through XMM0 for mutation.
+		m_callLayout.returnXmmRegister = 0;
 	}
 	m_callLayout.stackArgumentBytes = func->detail().argStackSize();
 
@@ -672,9 +687,22 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	asmjit::x86::Mem writeMaskDestination(argStruct, offsetof(Parameters, m_writeMask));
 	writeMaskDestination.setSize(pointerSizeFromArch(arch));
 	cc.mov(writeMaskDestination, 0);
+	for (uint32_t xmmIndex = 0; xmmIndex < (arch == asmjit::Arch::kX64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+		asmjit::x86::Mem destination(argStruct, offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex);
+		cc.movdqu(destination, asmjit::x86::xmm(xmmIndex));
+	}
+	asmjit::x86::Mem xmmWriteMask(argStruct, offsetof(Parameters, m_xmmWriteMask));
+	xmmWriteMask.setSize(pointerSizeFromArch(arch));
+	cc.mov(xmmWriteMask, 0);
 	asmjit::x86::Mem entryStackDestination(argStruct, offsetof(Parameters, m_entryStack));
 	entryStackDestination.setSize(pointerSizeFromArch(arch));
 	cc.mov(entryStackDestination, 0);
+	if (arch == asmjit::Arch::kX86) {
+		// Parameters is a 64-bit field; x86 only stores the pointer-sized low half.
+		asmjit::x86::Mem entryStackHigh(argStruct, offsetof(Parameters, m_entryStack) + sizeof(uint32_t));
+		entryStackHigh.setSize(sizeof(uint32_t));
+		cc.mov(entryStackHigh, 0);
+	}
 
 	asmjit::x86::Mem retStack = cc.newStack(sizeof(ReturnValue), 16);
 	asmjit::x86::Gp retStruct = cc.newUIntPtr("retStruct");
@@ -702,6 +730,17 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	invokeNode->setArg(1, static_cast<uint8_t>(sig.argCount()));
 	invokeNode->setArg(2, retStruct);
 
+	// The dispatcher may clobber any volatile register on both architectures.
+	// Reload every stack-state pointer before touching its contents again.
+	cc.lea(argStruct, argsStack);
+	cc.lea(retStruct, retStack);
+	auto restoreXmm = [&]() {
+		for (uint32_t xmmIndex = 0; xmmIndex < (arch == asmjit::Arch::kX64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+			asmjit::x86::Mem source(argStruct, offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex);
+			cc.movdqu(asmjit::x86::xmm(xmmIndex), source);
+		}
+	};
+	restoreXmm();
 	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
 		const asmjit::TypeId argType = sig.args()[argIndex];
 		asmjit::x86::Mem source(argStruct, offsetof(Parameters, m_arguments) + sizeof(uint64_t) * argIndex);
@@ -728,6 +767,8 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 
 	asmjit::Label skipOriginal = cc.newLabel();
 	asmjit::Label finish = cc.newLabel();
+	cc.lea(argStruct, argsStack);
+	cc.lea(retStruct, retStack);
 	cc.cmp(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 0);
 	cc.je(skipOriginal);
 
@@ -737,6 +778,8 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
 		originalInvokeNode->setArg(argIndex, argRegisters[argIndex]);
 	}
+	cc.lea(argStruct, argsStack);
+	cc.lea(retStruct, retStack);
 	if (sig.hasRet()) {
 		cc.cmp(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_overrideReturn)), 0);
 		cc.jne(finish);
@@ -756,6 +799,8 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	cc.jmp(finish);
 	cc.bind(skipOriginal);
 	cc.bind(finish);
+	cc.lea(argStruct, argsStack);
+	cc.lea(retStruct, retStack);
 	restoreFlags();
 	if (sig.hasRet()) {
 		asmjit::x86::Mem retStackIndex(retStack);

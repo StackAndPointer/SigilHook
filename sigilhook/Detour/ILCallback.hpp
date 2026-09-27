@@ -41,6 +41,8 @@ namespace SIGILHOOK {
 			uint64_t m_flags;
 			uint64_t m_writeMask;
 			uint64_t m_entryStack;
+			uint64_t m_xmm[SIGILHOOK_XMM_COUNT][2];
+			uint64_t m_xmmWriteMask;
 
 		private:
 			char* getArgPtr(const uint8_t idx) const {
@@ -63,6 +65,7 @@ namespace SIGILHOOK {
 			enum class Kind : uint8_t {
 				None,
 				Register,
+				XmmRegister,
 				Stack
 			};
 
@@ -76,6 +79,7 @@ namespace SIGILHOOK {
 			uint32_t calleeCleanup = 0;
 			uint32_t stackArgumentBytes = 0;
 			int returnRegister = -1;
+			int returnXmmRegister = -1;
 			std::vector<ArgumentLocation> arguments;
 		};
 

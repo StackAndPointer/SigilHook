@@ -104,6 +104,29 @@ typedef struct sigilhook_register_context {
     uint64_t flags;
     uint64_t write_mask;
 } sigilhook_register_context;
+typedef enum sigilhook_xmm_register {
+    SIGILHOOK_XMM_0 = 0,
+    SIGILHOOK_XMM_1 = 1,
+    SIGILHOOK_XMM_2 = 2,
+    SIGILHOOK_XMM_3 = 3,
+    SIGILHOOK_XMM_4 = 4,
+    SIGILHOOK_XMM_5 = 5,
+    SIGILHOOK_XMM_6 = 6,
+    SIGILHOOK_XMM_7 = 7,
+    SIGILHOOK_XMM_8 = 8,
+    SIGILHOOK_XMM_9 = 9,
+    SIGILHOOK_XMM_10 = 10,
+    SIGILHOOK_XMM_11 = 11,
+    SIGILHOOK_XMM_12 = 12,
+    SIGILHOOK_XMM_13 = 13,
+    SIGILHOOK_XMM_14 = 14,
+    SIGILHOOK_XMM_15 = 15,
+    SIGILHOOK_XMM_COUNT = 16
+} sigilhook_xmm_register;
+typedef struct sigilhook_xmm_context {
+    uint64_t values[SIGILHOOK_XMM_COUNT][2];
+    uint64_t write_mask;
+} sigilhook_xmm_context;
 
 typedef struct sigilhook_call_frame {
     uint64_t* arguments;
@@ -115,6 +138,7 @@ typedef struct sigilhook_call_frame {
     uint64_t instruction_pointer;
     uint64_t* instruction_pointer_destination;
     uint8_t* instruction_pointer_overridden;
+    sigilhook_xmm_context* xmm;
 } sigilhook_call_frame;
 
 typedef void (SIGILHOOK_CALL *sigilhook_jit_callback)(
@@ -128,6 +152,10 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_flags(
     const sigilhook_call_frame* frame, uint64_t* out_flags);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_flags(
     sigilhook_call_frame* frame, uint64_t flags);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_xmm(
+    const sigilhook_call_frame* frame, uint8_t reg, uint8_t lane, uint64_t* out_value);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_xmm(
+    sigilhook_call_frame* frame, uint8_t reg, uint8_t lane, uint64_t value);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_get_instruction_pointer(
     const sigilhook_call_frame* frame, uint64_t* out_address);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_instruction_pointer(
@@ -236,6 +264,36 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_load_directory(c
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_set_shared_u64(const char* name, uint64_t value);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* name, uint64_t* out_value);
+
+typedef enum sigilhook_native_kind {
+    SIGILHOOK_NATIVE_VOID = 0,
+    SIGILHOOK_NATIVE_SINT = 1,
+    SIGILHOOK_NATIVE_UINT = 2,
+    SIGILHOOK_NATIVE_FLOAT = 3,
+    SIGILHOOK_NATIVE_POINTER = 4,
+    SIGILHOOK_NATIVE_RECORD = 5,
+    SIGILHOOK_NATIVE_STRING = 6,
+    SIGILHOOK_NATIVE_WSTRING = 7
+} sigilhook_native_kind;
+
+typedef struct sigilhook_native_value {
+    sigilhook_native_kind kind;
+    uint8_t width;
+    uint8_t alignment;
+    uint8_t reserved;
+    uint32_t offset;
+    uint32_t size;
+} sigilhook_native_value;
+
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_module_load(const char* dll_name, uint64_t* out_module);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_module_export(uint64_t module, const char* export_name, uint64_t* out_address);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_module_free(uint64_t module);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_modules_shutdown(void);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_native_address(const char* dll_name, const char* export_name, const char* call_convention, uint64_t* out_address);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_invoke_native_blob(
+    uint64_t target, const char* return_signature, const char* argument_signature,
+    const char* call_convention, const void* argument_blob, size_t argument_size,
+    void* return_blob, size_t return_size);
 
 #ifdef __cplusplus
 }

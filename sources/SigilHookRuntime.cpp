@@ -284,7 +284,11 @@ bool processScriptFile(
     return true;
 }
 
-bool collectScriptFiles(const fs::path& directory, std::vector<fs::path>& scripts, std::string& error) {
+bool collectScriptFiles(
+    const fs::path& directory,
+    std::vector<fs::path>& scripts,
+    std::vector<fs::path>& headers,
+    std::string& error) {
     std::error_code iteratorError;
     fs::recursive_directory_iterator iterator(
         directory, fs::directory_options::skip_permission_denied, iteratorError);
@@ -297,8 +301,12 @@ bool collectScriptFiles(const fs::path& directory, std::vector<fs::path>& script
     while (iterator != end) {
         std::error_code entryError;
         const fs::directory_entry& entry = *iterator;
-        if (entry.is_regular_file(entryError) && !entryError && extensionEquals(entry.path(), ".as")) {
-            scripts.push_back(normalizedPath(entry.path()));
+        if (entry.is_regular_file(entryError) && !entryError) {
+            if (extensionEquals(entry.path(), ".as")) {
+                scripts.push_back(normalizedPath(entry.path()));
+            } else if (extensionEquals(entry.path(), ".ash")) {
+                headers.push_back(normalizedPath(entry.path()));
+            }
         }
         if (entryError) {
             error = "cannot inspect script entry: " + entryError.message();
@@ -312,6 +320,9 @@ bool collectScriptFiles(const fs::path& directory, std::vector<fs::path>& script
     }
 
     std::sort(scripts.begin(), scripts.end(), [](const fs::path& left, const fs::path& right) {
+        return left.generic_string() < right.generic_string();
+    });
+    std::sort(headers.begin(), headers.end(), [](const fs::path& left, const fs::path& right) {
         return left.generic_string() < right.generic_string();
     });
     return true;
@@ -420,6 +431,19 @@ asQWORD scriptGetFlags() {
 
 bool scriptSetFlags(asQWORD flags) {
     return sigilhook_call_frame_set_flags(g_currentFrame, static_cast<uint64_t>(flags)) == SIGILHOOK_OK;
+}
+
+asQWORD scriptGetXmm(asBYTE reg, asBYTE lane) {
+    uint64_t value = 0;
+    sigilhook_call_frame_get_xmm(
+        g_currentFrame, static_cast<uint8_t>(reg), static_cast<uint8_t>(lane), &value);
+    return value;
+}
+
+bool scriptSetXmm(asBYTE reg, asBYTE lane, asQWORD value) {
+    return sigilhook_call_frame_set_xmm(
+               g_currentFrame, static_cast<uint8_t>(reg), static_cast<uint8_t>(lane),
+               static_cast<uint64_t>(value)) == SIGILHOOK_OK;
 }
 
 asQWORD scriptGetInstructionPointer() {
@@ -1020,6 +1044,18 @@ asBYTE scriptInvokeUsercall(
     outReturnValue = result;
     return static_cast<asBYTE>(status);
 }
+asQWORD scriptNativeAddress(const std::string& dll, const std::string& name, const std::string& convention);
+asBYTE scriptInvokeNativeBlob(asQWORD target, const std::string& signature, const std::string& convention, const CScriptArray& arguments, CScriptArray& returns);
+void scriptNativeThrow(asBYTE status);
+CScriptArray* scriptNativeStringBytes(const std::string& value, bool wide);
+asQWORD scriptBufferAddress(const CScriptArray& bytes);
+asQWORD scriptReadBlob(const CScriptArray& bytes, asUINT offset, asUINT width);
+void scriptWriteBlob(CScriptArray& bytes, asUINT offset, asUINT width, asQWORD value);
+asQWORD scriptFloatBits(float value);
+float scriptBitsFloat(asQWORD bits);
+asQWORD scriptDoubleBits(double value);
+double scriptBitsDouble(asQWORD bits);
+
 void registerScriptApi(asIScriptEngine* engine) {
     RegisterStdString(engine);
     RegisterScriptArray(engine, true);
@@ -1055,6 +1091,8 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("bool setRegister(uint8, uint64)", asFUNCTION(scriptSetRegister), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getFlags()", asFUNCTION(scriptGetFlags), asCALL_CDECL);
     engine->RegisterGlobalFunction("bool setFlags(uint64)", asFUNCTION(scriptSetFlags), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 getXmm(uint8, uint8)", asFUNCTION(scriptGetXmm), asCALL_CDECL);
+    engine->RegisterGlobalFunction("bool setXmm(uint8, uint8, uint64)", asFUNCTION(scriptSetXmm), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getInstructionPointer()", asFUNCTION(scriptGetInstructionPointer), asCALL_CDECL);
     engine->RegisterGlobalFunction("bool setInstructionPointer(uint64)", asFUNCTION(scriptSetInstructionPointer), asCALL_CDECL);
     engine->RegisterGlobalFunction("string disassemble(uint64, uint)", asFUNCTION(scriptDisassemble), asCALL_CDECL);
@@ -1109,6 +1147,17 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 setSharedU64Status(const string &in, uint64)", asFUNCTION(scriptStatusSetSharedU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 sharedU64Status(const string &in, uint64 &out)", asFUNCTION(scriptStatusSharedU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 invokeUsercall(uint64, const string &in, const string &in, const string &in, const array<uint64> &in, uint64 &out)", asFUNCTION(scriptInvokeUsercall), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 nativeAddress(const string &in, const string &in, const string &in)", asFUNCTION(scriptNativeAddress), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 invokeNativeBlob(uint64, const string &in, const string &in, const array<uint8> &in, array<uint8> &inout)", asFUNCTION(scriptInvokeNativeBlob), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void nativeThrow(uint8)", asFUNCTION(scriptNativeThrow), asCALL_CDECL);
+    engine->RegisterGlobalFunction("array<uint8>@ nativeStringBytes(const string &in, bool)", asFUNCTION(scriptNativeStringBytes), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 bufferAddress(const array<uint8> &in)", asFUNCTION(scriptBufferAddress), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 shReadBlob(const array<uint8> &in, uint, uint)", asFUNCTION(scriptReadBlob), asCALL_CDECL);
+    engine->RegisterGlobalFunction("void shWriteBlob(array<uint8> &inout, uint, uint, uint64)", asFUNCTION(scriptWriteBlob), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint32 shFloatBits(float)", asFUNCTION(scriptFloatBits), asCALL_CDECL);
+    engine->RegisterGlobalFunction("float shBitsFloat(uint32)", asFUNCTION(scriptBitsFloat), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint64 shDoubleBits(double)", asFUNCTION(scriptDoubleBits), asCALL_CDECL);
+    engine->RegisterGlobalFunction("double shBitsDouble(uint64)", asFUNCTION(scriptBitsDouble), asCALL_CDECL);
 }
 
 asQWORD scriptHookNative(asQWORD target, asQWORD callback) {
@@ -1315,6 +1364,14 @@ sigilhook_status loadDirectory(const fs::path& directory) {
         return failLoad(SIGILHOOK_ERROR_BUSY);
     }
 
+    const fs::path requestedRoot = normalizedPath(directory);
+    if (g_runtime.scriptDirectory != requestedRoot) {
+        g_runtime.scriptDirectory = requestedRoot;
+        g_runtime.logPath = requestedRoot / "logs" / "SigilHook.log";
+        std::error_code logError;
+        fs::create_directories(g_runtime.logPath.parent_path(), logError);
+        if (logError) return failLoad(SIGILHOOK_ERROR_SCRIPT);
+    }
     const fs::path root = normalizedPath(directory);
     const fs::path mainPath = normalizedPath(root / "main.as");
     std::error_code mainError;
@@ -1324,8 +1381,9 @@ sigilhook_status loadDirectory(const fs::path& directory) {
     }
 
     std::vector<fs::path> scripts;
+    std::vector<fs::path> headers;
     std::string collectionError;
-    if (!collectScriptFiles(root, scripts, collectionError)) {
+    if (!collectScriptFiles(root, scripts, headers, collectionError)) {
         writeLog("script load error: " + collectionError);
         return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
@@ -1412,6 +1470,7 @@ sigilhook_status loadDirectory(const fs::path& directory) {
             return SIGILHOOK_ERROR_SCRIPT;
         }
         sigilhook_clear_invoker_cache();
+        sigilhook_modules_shutdown();
         g_runtime.modules.pop_back();
         module->Discard();
         g_runtime.stopping.store(false, std::memory_order_release);
@@ -1460,6 +1519,7 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
         return SIGILHOOK_ERROR_BUSY;
     }
     sigilhook_clear_invoker_cache();
+    sigilhook_modules_shutdown();
     for (asIScriptModule* module : g_runtime.modules) {
         if (module != nullptr) module->Discard();
     }
@@ -1528,3 +1588,103 @@ sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declara
 }
 
 } // extern "C"
+namespace {
+asQWORD scriptNativeAddress(const std::string& dll, const std::string& name, const std::string& convention) {
+    uint64_t address = 0;
+    sigilhook_native_address(dll.c_str(), name.c_str(), convention.c_str(), &address);
+    return address;
+}
+
+asBYTE scriptInvokeNativeBlob(
+    asQWORD target, const std::string& signature, const std::string& convention,
+    const CScriptArray& arguments, CScriptArray& returns) {
+    const asBYTE nativeStatus = static_cast<asBYTE>(sigilhook_invoke_native_blob(
+        static_cast<uint64_t>(target), signature.c_str(), signature.c_str(), convention.c_str(),
+        const_cast<CScriptArray&>(arguments).GetBuffer(), arguments.GetSize(),
+        returns.GetBuffer(), returns.GetSize()));
+    return nativeStatus;
+}
+
+void scriptNativeThrow(asBYTE status) {
+    if (asIScriptContext* context = asGetActiveContext()) {
+        context->SetException(sigilhook_status_string(static_cast<sigilhook_status>(status)));
+    }
+}
+
+CScriptArray* scriptNativeStringBytes(const std::string& value, bool wide) {
+    asIScriptContext* context = asGetActiveContext();
+    asITypeInfo* type = context == nullptr || context->GetEngine() == nullptr
+        ? nullptr : context->GetEngine()->GetTypeInfoByDecl("array<uint8>");
+    if (type == nullptr) return nullptr;
+    if (!wide) {
+        CScriptArray* result = CScriptArray::Create(type, static_cast<asUINT>(value.size() + 1));
+        if (result != nullptr) {
+            if (!value.empty()) std::memcpy(result->GetBuffer(), value.data(), value.size());
+            static_cast<uint8_t*>(result->GetBuffer())[value.size()] = 0;
+        }
+        return result;
+    }
+#if defined(_WIN32)
+    const int count = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0);
+    if (count <= 0) return nullptr;
+    std::wstring wideValue(static_cast<size_t>(count) + 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), wideValue.data(), count);
+    CScriptArray* result = CScriptArray::Create(type, static_cast<asUINT>(wideValue.size() * sizeof(wchar_t)));
+    if (result != nullptr) std::memcpy(result->GetBuffer(), wideValue.data(), wideValue.size() * sizeof(wchar_t));
+    return result;
+#else
+    CScriptArray* result = CScriptArray::Create(type, static_cast<asUINT>(value.size()));
+    if (result != nullptr) {
+        if (!value.empty()) std::memcpy(result->GetBuffer(), value.data(), value.size());
+        static_cast<uint8_t*>(result->GetBuffer())[value.size()] = 0;
+    }
+    return result;
+#endif
+}
+
+asQWORD scriptBufferAddress(const CScriptArray& bytes) {
+    return static_cast<asQWORD>(reinterpret_cast<uintptr_t>(const_cast<CScriptArray&>(bytes).GetBuffer()));
+}
+
+asQWORD scriptReadBlob(const CScriptArray& bytes, asUINT offset, asUINT width) {
+    if (width == 0 || width > 8 || offset > bytes.GetSize() || width > bytes.GetSize() - offset) return 0;
+    const auto* data = static_cast<const uint8_t*>(const_cast<CScriptArray&>(bytes).GetBuffer());
+    uint64_t value = 0;
+    for (asUINT index = 0; index < width; ++index) value |= static_cast<uint64_t>(data[offset + index]) << (index * 8);
+    return value;
+}
+
+void scriptWriteBlob(CScriptArray& bytes, asUINT offset, asUINT width, asQWORD value) {
+    if (width == 0 || width > 8) return;
+    const asUINT required = offset + width;
+    if (required < offset || required > bytes.GetSize()) bytes.Resize(required);
+    auto* data = static_cast<uint8_t*>(bytes.GetBuffer());
+    for (asUINT index = 0; index < width; ++index) data[offset + index] = static_cast<uint8_t>(value >> (index * 8));
+}
+
+asQWORD scriptFloatBits(float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+asQWORD scriptDoubleBits(double value) {
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+float scriptBitsFloat(asQWORD bits) {
+    const uint32_t value = static_cast<uint32_t>(bits);
+    float result = 0.0f;
+    std::memcpy(&result, &value, sizeof(result));
+    return result;
+}
+
+double scriptBitsDouble(asQWORD bits) {
+    const uint64_t value = static_cast<uint64_t>(bits);
+    double result = 0.0;
+    std::memcpy(&result, &value, sizeof(result));
+    return result;
+}
+} // namespace
