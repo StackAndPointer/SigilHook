@@ -25,6 +25,11 @@
 #define CHECK(expression) do { if (!(expression)) { std::cerr << "check failed: " #expression << " at line " << __LINE__ << '\n'; char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); std::cerr << error << '\n'; return __LINE__; } } while (false)
 
 namespace {
+void printLog(sigilhook_log_level level, const char* message, void*) {
+    std::cerr << (level == SIGILHOOK_LOG_ERROR ? "error: " : level == SIGILHOOK_LOG_WARNING ? "warning: " : "info: ")
+              << (message == nullptr ? "" : message) << '\n';
+}
+
 
 int g_testMode = 0;
 volatile int g_targetCalls = 0;
@@ -770,6 +775,7 @@ int testNativeBindingBlob() {
 } // namespace
 
 int main() {
+    sigilhook_set_log_callback(printLog, nullptr);
     CHECK(testBasicJitDetour() == 0);
     CHECK(testXmmRegisters() == 0);
     CHECK(testStackArgumentRedirect() == 0);

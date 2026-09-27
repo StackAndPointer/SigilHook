@@ -403,6 +403,8 @@ int main() {
     CHECK(sigilhook_runtime_get_shared_u64("scriptBad", &scriptBad) == SIGILHOOK_OK);
     if (scriptBad != 0) {
         std::cerr << "helper failure step: " << scriptBad << std::endl;
+        std::ifstream runtimeLog(scriptDirectory / "logs" / "SigilHook.log");
+        if (runtimeLog) std::cerr << runtimeLog.rdbuf() << std::endl;
         uint64_t invokeStatus = 0;
         uint64_t invokeResult = 0;
         sigilhook_runtime_get_shared_u64("invokeStatus", &invokeStatus);
@@ -433,11 +435,17 @@ int main() {
     CHECK(midTarget(35) == 42);
     CHECK(g_midTargetCalls == 1);
     CHECK(reinterpret_cast<StdCallFn>(&stdcallTarget)(7, 9) == 402);
+    if (g_conventionTargetCalls != 0) std::cerr << "after stdcall: " << g_conventionTargetCalls << '\n';
     CHECK(reinterpret_cast<FastCallFn>(&fastcallTarget)(7, 9) == 402);
+    if (g_conventionTargetCalls != 0) std::cerr << "after fastcall: " << g_conventionTargetCalls << '\n';
     CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);
+    if (g_conventionTargetCalls != 0) std::cerr << "after thiscall: " << g_conventionTargetCalls << '\n';
     CHECK(reinterpret_cast<VectorCallFn>(&vectorcallTarget)(7, 9) == 402);
+    if (g_conventionTargetCalls != 0) std::cerr << "after vectorcall: " << g_conventionTargetCalls << '\n';
     CHECK(reinterpret_cast<int (SIGILHOOK_CALL *)(int, int)>(reinterpret_cast<uint64_t>(&cdeclTarget))(7, 9) == 402);
+    if (g_conventionTargetCalls != 0) std::cerr << "after cdecl: " << g_conventionTargetCalls << '\n';
     CHECK(g_conventionTargetCalls == 0);
+    if (g_conventionTargetCalls != 0) std::cerr << "convention target calls: " << g_conventionTargetCalls << '\n';
 
     const auto invoke = reinterpret_cast<UsercallCaller>(usercallCaller);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);
