@@ -444,8 +444,11 @@ int main() {
     if (g_conventionTargetCalls != 0) std::cerr << "after vectorcall: " << g_conventionTargetCalls << '\n';
     CHECK(reinterpret_cast<int (SIGILHOOK_CALL *)(int, int)>(reinterpret_cast<uint64_t>(&cdeclTarget))(7, 9) == 402);
     if (g_conventionTargetCalls != 0) std::cerr << "after cdecl: " << g_conventionTargetCalls << '\n';
+    if (g_conventionTargetCalls != 0) {
+        std::ifstream runtimeLog(scriptDirectory / "logs" / "SigilHook.log");
+        if (runtimeLog) std::cerr << runtimeLog.rdbuf() << std::endl;
+    }
     CHECK(g_conventionTargetCalls == 0);
-    if (g_conventionTargetCalls != 0) std::cerr << "convention target calls: " << g_conventionTargetCalls << '\n';
 
     const auto invoke = reinterpret_cast<UsercallCaller>(usercallCaller);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);
