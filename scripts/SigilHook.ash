@@ -113,7 +113,34 @@ void shLog(const string &in message) {
     log(message);
 }
 
+uint64 shNativeAddress(const string &in dll, const string &in exportName,
+                       const string &in convention) {
+    return nativeAddress(dll, exportName, convention);
+}
+
+uint8 shInvokeNativeBlob(uint64 target, const string &in signature,
+                         const string &in convention, const array<uint8> &in args,
+                         array<uint8> &inout ret) {
+    return invokeNativeBlob(target, signature, convention, args, ret);
+}
+
+void shNativeThrow(uint8 status) {
+    nativeThrow(status);
+}
+
+array<uint8>@ shNativeStringBytes(const string &in value, bool wide) {
+    return nativeStringBytes(value, wide);
+}
+
+uint64 shBufferAddress(const array<uint8> &in bytes) {
+    return bufferAddress(bytes);
+}
+
 uint64 shHookScript(uint64 target, const string &in callbackDeclaration, const string &in signature) {
+    return hookDetour(target, callbackDeclaration, signature);
+}
+
+uint64 shHookMid(uint64 target, const string &in callbackDeclaration, const string &in signature) {
     return hookDetour(target, callbackDeclaration, signature);
 }
 
@@ -178,6 +205,12 @@ void shRehook(uint64 handle) {
 
 bool shIsHooked(uint64 handle) {
     return isHooked(handle);
+}
+
+bool shResumeMid(uint64 handle) {
+    if (!shSetInstructionPointer(shTrampoline(handle))) return false;
+    shSkipOriginal();
+    return true;
 }
 
 uint8 shHookType(uint64 handle) {
@@ -261,6 +294,34 @@ uint64 shFlags() {
 
 bool shSetFlags(uint64 flags) {
     return setFlags(flags);
+}
+
+bool shXmmAvailable(uint8 reg) {
+    return shIsX64() || reg < 8;
+}
+
+uint64 shXmm(uint8 reg, uint8 lane = 0) {
+    return getXmm(reg, lane);
+}
+
+bool shSetXmm(uint8 reg, uint64 value, uint8 lane = 0) {
+    return setXmm(reg, lane, value);
+}
+
+float shXmmFloat(uint8 reg) {
+    return shBitsFloat(uint32(shXmm(reg, 0)));
+}
+
+bool shSetXmmFloat(uint8 reg, float value) {
+    return shSetXmm(reg, uint64(shFloatBits(value)), 0);
+}
+
+double shXmmDouble(uint8 reg) {
+    return shBitsDouble(shXmm(reg, 0));
+}
+
+bool shSetXmmDouble(uint8 reg, double value) {
+    return shSetXmm(reg, shDoubleBits(value), 0);
 }
 
 uint64 shInstructionPointer() {
