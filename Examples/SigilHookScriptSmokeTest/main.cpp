@@ -461,6 +461,16 @@ int main() {
     std::cerr << "after thiscall value: " << g_conventionTargetCalls << std::endl;
     sigilhook_runtime_get_shared_u64("conventionCallbackCalls", &conventionCallbackCalls);
     std::cerr << "callbacks after thiscall: " << conventionCallbackCalls << std::endl;
+    if (g_conventionTargetCalls != 0) {
+        uint64_t helperFailure = 0;
+        uint64_t actualArg0 = 0;
+        uint64_t actualArg1 = 0;
+        sigilhook_runtime_get_shared_u64("scriptBad", &helperFailure);
+        sigilhook_runtime_get_shared_u64("conventionActualArg0", &actualArg0);
+        sigilhook_runtime_get_shared_u64("conventionActualArg1", &actualArg1);
+        std::cerr << "thiscall helper step: " << helperFailure
+                  << ", args: " << actualArg0 << ", " << actualArg1 << std::endl;
+    }
     std::cerr << "calling vectorcall" << std::endl;
     const auto vectorcallAddress = reinterpret_cast<uint64_t>(&vectorcallTarget);
     std::cerr << "vectorcall address=0x" << std::hex << vectorcallAddress << " byte=" << static_cast<unsigned>(*reinterpret_cast<const unsigned char*>(vectorcallAddress)) << std::dec << std::endl;

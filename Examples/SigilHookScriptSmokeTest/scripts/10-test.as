@@ -179,18 +179,28 @@ void onConvention() {
     ++g_conventionCallbackCalls;
     shSetSharedU64("conventionCallbackCalls", g_conventionCallbackCalls);
     g_helperStep = 20;
-    if (shArg(0) != 7 || shArg(1) != 9) { failHelperTest(); return; }
+    if (shArg(0) != 7 || shArg(1) != 9) {
+        shSetSharedU64("conventionActualArg0", shArg(0));
+        shSetSharedU64("conventionActualArg1", shArg(1));
+        failHelperTest();
+        return;
+    }
     shSetArg(0, 4);
     shSetArg(1, 2);
+    g_helperStep = 21;
     shSetReturn8(0xa5);
     if (shReturn8() != 0xa5) { failHelperTest(); return; }
+    g_helperStep = 22;
     shSetReturn16(0xbeef);
     if (shReturn16() != 0xbeef) { failHelperTest(); return; }
+    g_helperStep = 23;
     shSetReturn32(0x12345678);
     if (shReturn32() != 0x12345678) { failHelperTest(); return; }
+    g_helperStep = 24;
     shSetReturn(402);
     shSkipOriginal();
 }
+
 
 void onUsercall() {
     g_helperStep = 30;
