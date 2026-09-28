@@ -251,6 +251,16 @@ uint64_t makePointerTarget(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+uint64_t makeThiscallCaller(asmjit::JitRuntime& runtime) {
+    if (asmjit::Environment::host().arch() != asmjit::Arch::kX86) return 0;
+    return makeStub(runtime, [](asmjit::x86::Assembler& a) {
+        a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::esp, 4));
+        a.mov(asmjit::x86::ecx, asmjit::x86::dword_ptr(asmjit::x86::esp, 12));
+        a.push(asmjit::x86::dword_ptr(asmjit::x86::esp, 16));
+        a.call(asmjit::x86::eax);
+        a.ret();
+    }).address;
+}
 uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -456,7 +466,13 @@ int main() {
     std::cerr << "calling thiscall" << std::endl;
     const auto thiscallAddress = memberFunctionAddress(&ThisCallTarget::target);
     std::cerr << "thiscall address=0x" << std::hex << thiscallAddress << " byte=" << static_cast<unsigned>(*reinterpret_cast<const unsigned char*>(thiscallAddress)) << std::dec << std::endl;
-    CHECK(reinterpret_cast<ThisCallFn>(memberFunctionAddress(&ThisCallTarget::target))(7, 9) == 402);
+    if constexpr (sizeof(void*) == 8) {
+        CHECK(reinterpret_cast<ThisCallFn>(thiscallAddress)(7, 9) == 402);
+    } else {
+        const auto thiscallCaller = reinterpret_cast<int (SIGILHOOK_CALL *)(uint64_t, uintptr_t, int)>(makeThiscallCaller(runtime));
+        CHECK(thiscallCaller != nullptr);
+        CHECK(thiscallCaller(thiscallAddress, 7, 9) == 402);
+    }
     if (g_conventionTargetCalls != 0) std::cerr << "after thiscall: " << g_conventionTargetCalls << '\n';
     std::cerr << "after thiscall value: " << g_conventionTargetCalls << std::endl;
     sigilhook_runtime_get_shared_u64("conventionCallbackCalls", &conventionCallbackCalls);
