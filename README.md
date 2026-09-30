@@ -6,9 +6,38 @@ SigilHook is an x86/x64 hook runtime derived from PolyHook 2 and powered by
 AngelScript. It exports a stable C ABI and builds an injectable `SigilHook.dll`
 that loads scripts from a directory beside the DLL.
 
+## Extensions over the upstream projects
+
+This section summarizes the deliberate additions on top of the two upstream projects.
+
+### Extensions over PolyHook 2
+
+- PolyHook 2 exposes its core as C++ class interfaces (`Detour`, `BreakPointHook`, `IatHook`, `EatHook`, `VFuncSwapHook`, `VTableSwapHook`, and others). SigilHook adds a stable C ABI on top: every exported function uses `extern "C"` and the `sigilhook_*` prefix, addresses cross the boundary as `uint64_t`, and hooks are passed as opaque handles. C++ class ABIs, STL containers, and exceptions are not exposed to callers.
+- SigilHook produces a real injectable deliverable. The build emits `SigilHook.dll` with a minimal `DllMain` and a separate initialization thread, so AngelScript initialization does not run under the Windows loader lock.
+- The runtime callback bridge was rewritten around AsmJit. The original `ILCallback` only suited simple callbacks and had callback-memory lifetime, error-handling, and thread-safety gaps that made it unsafe to expose directly to scripts. The replacement JIT callback supports reading and writing arguments, return values, general-purpose registers, and flags.
+- A calling-convention layer was added: `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, and custom `usercall` mappings (`argN=<register|stack+offset>`, `ret=<register>`, `x86 cleanup=<bytes>`). These are implemented by AsmJit-generated stubs, with one description grammar shared by x86 and x64.
+- Mid-hook semantics were added: `shHookMid` plus `shResumeMid` redirect the instruction pointer to the trampoline, allowing code to run immediately before the original function body and then continue into it.
+- Script-level read/write access was added for general-purpose registers, XMM registers, and flags, including partial 8/16/32-bit writes such as `shReg16` and `shSetReg16`. `SP` is read-only so the callback return path stays intact.
+- Helper surfaces were added for memory reads and writes, memory protection changes, pattern scanning, Zydis disassembly, CMP/TEST flag computation, FXSAVE/FXRSTOR, executable return snippets, and stack-pointer jump snippets.
+- Hot reload was added over a per-process named pipe, `\\.\pipe\SigilHook.<pid>`, together with `SigilHookReload.bat`. Scripts can be reloaded by process or across all live hosts without re-injection.
+- Native DLL binding was added: runtime `LoadLibraryW`/`GetProcAddress`, PE bitness validation, export caching, reference counting, reverse-order `FreeLibrary`, and `header_to_ash.py` to generate AngelScript wrappers for supported C ABI headers.
+
+### Extensions over AngelScript
+
+- The whole script directory is compiled into a single `SigilHook.Application` module, with every `.as` file added as a section. Split `.as` files can call each other's global functions and read or write shared globals directly, without `import` or `export`, so the authoring experience stays close to a normal C/C++ project.
+- `.ash` header semantics were added: `#include "..."` and `#include <...>` are resolved relative to the including file and then the script root, normalized absolute paths detect cycles, and each header expands once per application without a protection macro. An optional `#pragma once` is recognized and removed. This is not a full C preprocessor; `#ifndef`/`#define` are not implemented.
+- A strict single entry point is enforced: only the root `main.as` may provide `void main()` and the optional `void unload()`. A missing `main.as`, a missing `main()`, an entry point in another file, or duplicate entries all return `SIGILHOOK_ERROR_SCRIPT` with a clear log, so test scripts in the same directory cannot be mistaken for entry points.
+- A complete AngelScript binding layer was added: core hooks, detours, breakpoints, IAT/EAT, VFunc/VTable, memory, registers, XMM, flags, calling conventions, `usercall`, JIT, script entry invocation, shared values, logging, and error codes are registered as script objects or global functions. `scripts/SigilHook.ash` is the single script-facing surface.
+- A bundled `.ash` standard library, `scripts/SigilHook.ash`, was added: constants, enums, convenience wrappers, status-preserving `sh...Status` variants, register/XMM/flag access, memory and scanning, assembly and disassembly, and DLL call wrappers.
+- Cross-module support was added: the SigilHook application layer shares globals across one module, while native AngelScript multi-module behavior is still respected in that cross-module calls need `import ... from "Module"` plus `BindAllImportedFunctions()` and raw globals are not shared. Both paths are covered by tests.
+- Runtime lifecycle management was added: AngelScript is initialized on a worker thread while `DllMain` does the minimum. Shutdown first rejects new callbacks, asks active scripts to abort through the AngelScript line callback, and supports `sigilhook_runtime_stop_with_timeout()`. If a callback cannot finish in time, the call returns `BUSY` and leaves the engine and hooks alive, avoiding half-initialized state and dangling jumps.
+- Script error propagation and status APIs were added: compile errors, hook errors, and run logs go to `<dll-dir>\SigilHook\logs\SigilHook.log`, and callers can query `shLastError`, `shStatusString`, and related helpers.
+- AngelScript's own source is not substantially modified. The changes are build integration and surrounding runtime integration; the bindings and runtime code are SigilHook additions.
 
 ## Documentation
 
+- [English README](README.md)
+- [中文 README](README.zh-CN.md)
 - [English usage guide](docs/USAGE.md)
 - [中文使用说明](docs/USAGE.zh-CN.md)
 
