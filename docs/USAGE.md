@@ -369,6 +369,8 @@ Rules:
 - `cleanup` is accepted only on x86; x64 must omit it or use `cleanup=0`.
 - x86 usercall returns wider than 32 bits are not supported.
 - x86 cannot use `R8..R15`.
+- `xmm0..xmm7` are valid argument locations on both architectures and `xmm8..xmm15` on x64. Use them when a custom convention places a float or double in a specific vector register, for example `usercall:ret=eax;arg0=xmm0;arg1=xmm1`.
+- Vector-register returns are not supported for usercall mappings; keep `ret` in a general-purpose register.
 
 Example:
 

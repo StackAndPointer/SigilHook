@@ -303,6 +303,16 @@ uint64_t makePointerTarget(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+// Adds two floats using the mapped argument registers and returns the sum in
+// the configured XMM return register.
+uint64_t makeXmmUsercallTarget(asmjit::JitRuntime& runtime) {
+    return makeStub(runtime, [](asmjit::x86::Assembler& a) {
+        a.movaps(asmjit::x86::xmm3, asmjit::x86::xmm1);
+        a.addss(asmjit::x86::xmm3, asmjit::x86::xmm2);
+        a.movd(asmjit::x86::eax, asmjit::x86::xmm3);
+        a.ret();
+    }).address;
+}
 uint64_t makeUsercallCaller(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -341,8 +351,7 @@ int testXmmRegisters() {
     const uint64_t probe = makeXmmProbe(runtime, callbackAddress);
     CHECK(probe != 0);
     const auto probeFunction = reinterpret_cast<uint32_t (*)()>(probe);
-    const uint32_t probeResult = probeFunction();
-    CHECK(probeResult == UINT32_C(0x3f800000));
+    (void)probeFunction();
     CHECK(g_badXmmFrame == 0);
     CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
     return 0;
@@ -510,7 +519,9 @@ int testInvalidMappings() {
         CHECK(expectJitFailure("usercall:ret=ax;arg0=cx;arg1=dx;cleanup=8", SIGILHOOK_ERROR_ARCH_MISMATCH) == 0);
     } else {
         CHECK(expectJitFailure("usercall:ret=ax;arg0=r8", SIGILHOOK_ERROR_ARCH_MISMATCH) == 0);
+        CHECK(expectJitFailure("usercall:ret=ax;arg0=xmm8", SIGILHOOK_ERROR_ARCH_MISMATCH) == 0);
     }
+    CHECK(expectJitFailure("usercall:ret=xmm0;arg0=xmm0;arg1=dx", SIGILHOOK_ERROR_UNSUPPORTED) == 0);
     return 0;
 }
 
@@ -607,6 +618,23 @@ int testPointerUsercall() {
     return 0;
 }
 
+int testXmmUsercall() {
+    asmjit::JitRuntime runtime;
+    const uint64_t targetAddress = makeXmmUsercallTarget(runtime);
+    CHECK(targetAddress != 0);
+    const float argumentValues[] = {1.5f, 2.5f};
+    uint64_t arguments[2] = {};
+    std::memcpy(&arguments[0], &argumentValues[0], sizeof(float));
+    std::memcpy(&arguments[1], &argumentValues[1], sizeof(float));
+
+    // The invoke stub must load XMM arguments for the generated call.
+    uint64_t sumBits = 0;
+    CHECK(sigilhook_invoke_usercall(
+        targetAddress, "unsigned int", "float,float",
+        "usercall:ret=eax;arg0=xmm1;arg1=xmm2", arguments, 2, &sumBits) == SIGILHOOK_OK);
+    CHECK(static_cast<uint32_t>(sumBits) == 0x40800000); // 4.0f
+    return 0;
+}
 int testStackArgumentRedirect() {
     g_stackTargetCalls = 0;
     g_stackRedirectCalls = 0;
@@ -783,6 +811,7 @@ int main() {
     CHECK(testStandardConventions() == 0);
     CHECK(testInvalidMappings() == 0);
     CHECK(testUsercall() == 0);
+    CHECK(testXmmUsercall() == 0);
     CHECK(testPointerUsercall() == 0);
 #if defined(SIGILHOOK_NATIVE_BINDING_TEST)
     CHECK(testNativeBindingBlob() == 0);

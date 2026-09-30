@@ -207,7 +207,6 @@ Stub makeStub(asmjit::JitRuntime& runtime, const std::function<void(asmjit::x86:
     }
     return result;
 }
-
 uint64_t makeUsercallTarget(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -235,6 +234,14 @@ uint64_t makeUsercallTarget(asmjit::JitRuntime& runtime) {
     }).address;
 }
 
+uint64_t makeXmmUsercallTarget(asmjit::JitRuntime& runtime) {
+    return makeStub(runtime, [](asmjit::x86::Assembler& a) {
+        a.movaps(asmjit::x86::xmm3, asmjit::x86::xmm0);
+        a.addss(asmjit::x86::xmm3, asmjit::x86::xmm1);
+        a.movd(asmjit::x86::eax, asmjit::x86::xmm3);
+        a.ret();
+    }).address;
+}
 uint64_t makePointerTarget(asmjit::JitRuntime& runtime) {
     return makeStub(runtime, [](asmjit::x86::Assembler& a) {
         const bool is64 = asmjit::Environment::host().arch() == asmjit::Arch::kX64;
@@ -333,11 +340,13 @@ int main() {
     CHECK(!scriptCopyError);
     asmjit::JitRuntime runtime;
     const uint64_t usercallTarget = makeUsercallTarget(runtime);
+    const uint64_t xmmUsercallTarget = makeXmmUsercallTarget(runtime);
     const uint64_t pointerTarget = makePointerTarget(runtime);
     const uint64_t pointerCaller = makeUsercallCaller(runtime);
     const uint64_t usercallCaller = makeUsercallCaller(runtime);
     const Stub memoryStub = makeStub(runtime, [](asmjit::x86::Assembler& a) { a.ret(); });
     CHECK(usercallTarget != 0);
+    CHECK(xmmUsercallTarget != 0);
     CHECK(pointerTarget != 0);
     CHECK(pointerCaller != 0);
     CHECK(usercallCaller != 0);
@@ -376,7 +385,7 @@ int main() {
     HANDLE hardwareThread = CreateThread(nullptr, 0, hardwareWorker, nullptr, CREATE_SUSPENDED, &hardwareThreadId);
     CHECK(hardwareThread != nullptr);
 
-    CHECK(sigilhook_runtime_start(nullptr) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_start(scriptDirectory.c_str()) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("target", reinterpret_cast<uint64_t>(&target)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("floatTarget", reinterpret_cast<uint64_t>(&floatTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("midTarget", reinterpret_cast<uint64_t>(&midTarget)) == SIGILHOOK_OK);
@@ -386,6 +395,7 @@ int main() {
     CHECK(sigilhook_runtime_set_shared_u64("thiscallTarget", memberFunctionAddress(&ThisCallTarget::target)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("vectorcallTarget", reinterpret_cast<uint64_t>(&vectorcallTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("usercallTarget", usercallTarget) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("xmmUsercallTarget", xmmUsercallTarget) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("pointerTarget", pointerTarget) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("pointerScriptCallbacks", 0) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("pointerExpected", static_cast<uintptr_t>(
@@ -428,6 +438,7 @@ int main() {
         sigilhook_runtime_get_shared_u64("invokeResult", &invokeResult);
         std::cerr << "invoke status: " << invokeStatus << ", result: " << invokeResult << std::endl;
     }
+
     CHECK(scriptBad == 0);
     uint64_t nativeBindingBad = 0;
     CHECK(sigilhook_runtime_get_shared_u64("nativeBindingBad", &nativeBindingBad) == SIGILHOOK_OK);

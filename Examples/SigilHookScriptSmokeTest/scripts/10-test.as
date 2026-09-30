@@ -27,6 +27,7 @@ uint64 g_usercallHook = SH_INVALID_HANDLE;
 uint64 g_pointerHook = SH_INVALID_HANDLE;
 uint64 g_floatHook = SH_INVALID_HANDLE;
 uint64 g_midHook = SH_INVALID_HANDLE;
+uint64 g_xmmUsercallHook = SH_INVALID_HANDLE;
 uint64 g_nativeHook = SH_INVALID_HANDLE;
 uint64 g_breakpointHook = SH_INVALID_HANDLE;
 uint64 g_hardwareHook = SH_INVALID_HANDLE;
@@ -290,6 +291,20 @@ void onMid() {
     if (!shResumeMid(g_midHook)) { failHelperTest(); return; }
 }
 
+void onXmmUsercall() {
+    g_helperStep = 1030;
+    if (shArg(0) != uint64(0x3fc00000) || shArg(1) != uint64(0x40200000)) {
+        failHelperTest();
+        return;
+    }
+    shSetArg(1, uint64(0x40600000));
+    if (shArg(1) != uint64(0x40600000)) {
+        failHelperTest();
+        return;
+    }
+    shKeepOriginal();
+}
+
 void verify() {
     g_helperStep = 100;
     g_hook = shHookScript(shSharedU64("target"), "void onTarget()", "int:int");
@@ -345,6 +360,18 @@ void verify() {
         failHelperTest();
         return;
     }
+    const string xmmMapping = "usercall:ret=eax;arg0=xmm0;arg1=xmm1";
+    array<uint64> xmmArguments(2);
+    xmmArguments[0] = uint64(0x3fc00000);
+    xmmArguments[1] = uint64(0x40200000);
+    uint64 xmmInvokeResult = 0;
+    const uint8 xmmInvokeStatus = shCallUsercall(shSharedU64("xmmUsercallTarget"),
+        "unsigned int", "float,float", xmmMapping, xmmArguments, xmmInvokeResult);
+    if (xmmInvokeStatus != SH_OK || uint32(xmmInvokeResult) != 0x40800000) {
+        g_helperStep = 1065;
+        failHelperTest();
+        return;
+    }
     if (invokeResult != 66 && invokeResult != 102) {
         g_helperStep = 1062;
         failHelperTest();
@@ -374,6 +401,18 @@ void verify() {
     if (!shIsValidHook(g_pointerHook)) { failHelperTest(); return; }
 
     g_helperStep = 107;
+    const string xmmHookMapping = "usercall:ret=none;arg0=xmm0;arg1=xmm1";
+    g_xmmUsercallHook = shHookUsercall(shSharedU64("xmmUsercallTarget"), "void onXmmUsercall()",
+        "void:float,float", xmmHookMapping);
+    if (!shIsValidHook(g_xmmUsercallHook)) { failHelperTest(); return; }
+    uint64 xmmHookResult = 0;
+    const uint8 xmmHookStatus = shCallUsercall(shSharedU64("xmmUsercallTarget"),
+        "unsigned int", "float,float", xmmMapping, xmmArguments, xmmHookResult);
+    if (xmmHookStatus != SH_OK || uint32(xmmHookResult) != 0x40a00000) {
+        g_helperStep = 1066;
+        failHelperTest();
+        return;
+    }
     g_nativeHook = shHookNative(shSharedU64("nativeTarget"), shSharedU64("nativeCallback"));
     if (!shIsValidHook(g_nativeHook)) { failHelperTest(); return; }
     g_helperStep = 108;
@@ -424,6 +463,7 @@ void cleanupTestHooks() {
     if (shIsValidHook(g_pointerHook)) { shDestroyHook(g_pointerHook); g_pointerHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_floatHook)) { shDestroyHook(g_floatHook); g_floatHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_midHook)) { shDestroyHook(g_midHook); g_midHook = SH_INVALID_HANDLE; }
+    if (shIsValidHook(g_xmmUsercallHook)) { shDestroyHook(g_xmmUsercallHook); g_xmmUsercallHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_nativeHook)) { shDestroyHook(g_nativeHook); g_nativeHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_breakpointHook)) { shDestroyHook(g_breakpointHook); g_breakpointHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_hardwareHook)) { shDestroyHook(g_hardwareHook); g_hardwareHook = SH_INVALID_HANDLE; }

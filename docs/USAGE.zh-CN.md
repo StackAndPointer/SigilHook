@@ -363,6 +363,8 @@ usercall:ret=<register|none>;argN=<register|stack+offset>;cleanup=<bytes>
 - `cleanup` 只在 x86 接受；x64 必须省略或写 `0`。
 - x86 的 usercall 返回值不能超过 32 位。
 - x86 不能使用 `R8..R15`。
+- `xmm0..xmm7` 在两种架构上都是合法的参数位置，x64 另外支持 `xmm8..xmm15`。自定义约定把 float/double 放在特定向量寄存器时使用它们，例如 `usercall:ret=eax;arg0=xmm0;arg1=xmm1`。
+- usercall 映射不支持向量寄存器返回值；请把 `ret` 保留为通用寄存器。
 
 示例：
 
