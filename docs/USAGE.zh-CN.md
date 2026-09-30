@@ -136,6 +136,10 @@ sigilhook_runtime_stop();
 
 卸载 DLL 前必须调用 `sigilhook_runtime_stop()`。这是强制协议：运行时启动期间绝不能直接调用 `FreeLibrary`。运行时清理不能在 Windows loader lock 下的 `DllMain` 中执行。默认停止超时为 5000 毫秒，也可以使用 `sigilhook_runtime_stop_with_timeout(timeout_ms)` 指定超时。停止时会先拒绝新的脚本回调，并由 AngelScript 的 line callback 在脚本自身线程中请求活动脚本中止。若原生代码阻塞在回调中，运行时无法强制取消；到达截止时间后会返回 `SIGILHOOK_ERROR_BUSY`，此时 Hook、模块和引擎仍然有效，不要卸载 DLL，应从原生线程重试停止或终止宿主进程。从活动 AngelScript context 内调用 stop 同样会返回 `SIGILHOOK_ERROR_BUSY`。进程终止不需要运行时清理。
 
+在 Windows 上，注入 DLL 还会启动一个仅限本机的命名管道，用于手动热重载脚本。运行构建输出目录、安装目录或发布包中的 `SigilHookReload.bat`，它会连接 `\\.\pipe\SigilHook` 并等待 `OK` 请求确认。随后管道工作线程会重载当前脚本目录：停止已加载的 AngelScript 应用，重新执行 `main.as::main()`，并把结果写入 `<SigilHook.dll 所在目录>\SigilHook\logs\SigilHook.log`。`OK` 只表示请求已被接受，不表示新脚本编译成功。当脚本回调无法在超时内静默下来时，重载失败并返回 `BUSY`，此时不会卸载任何脚本或 Hook。重载失败时，部分启动的新运行时会再次停止，因此可以直接修复 `main.as` 后重新加载目录。该管道只接受本机连接，第一版同一 Windows 会话只支持一个 SigilHook 宿主进程。
+
+原生宿主也可以直接调用 `sigilhook_runtime_reload()` 或 `sigilhook_runtime_reload_with_timeout()` 触发同一路径。脚本可以调用 `shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)`，但普通 Hook 回调不应重载正在执行的模块。
+
 DLL 本身不是注入器；仍需要宿主自己的注入机制，并且 DLL 必须与目标进程位数一致。
 
 ## 4. 脚本模块与头文件
@@ -233,7 +237,7 @@ SH_ERROR_EXCEPTION
 | 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
 | 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
-| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
+| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shReloadStatus`、`shReloadWithTimeoutStatus`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
 
 具体声明、参数宽度、返回值和 `out` 参数以
 [`scripts/SigilHook.ash`](../scripts/SigilHook.ash) 为准。原生集成应使用对应的
@@ -483,7 +487,7 @@ shSetSharedU64("seed", 42);
 uint64 seed = shSharedU64("seed");
 ```
 
-状态版本是 `shSetSharedU64Status()` 和 `shSharedU64Status()`。`shCallEntry("void myEntry()")` 调用已加载应用模块中的函数。`shLoadDirectory()` 可用于显式加载，但正常部署路径是上一节的 DLL 自动加载。
+状态版本是 `shSetSharedU64Status()` 和 `shSharedU64Status()`。`shCallEntry("void myEntry()")` 调用已加载应用模块中的函数。`shLoadDirectory()` 可用于显式加载，但正常部署路径是上一节的 DLL 自动加载。`shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)` 会停止并重载当前应用；应从原生工具或其他驱动入口调用，不要在正在该模块中执行的回调里重载自身。
 
 ## 11. 错误处理与日志
 

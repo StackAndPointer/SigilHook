@@ -54,6 +54,25 @@ the original function.
 
 The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop()` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock. This is a required unload protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; `sigilhook_runtime_stop_with_timeout()` can select another timeout. During shutdown, the runtime rejects new callbacks and the AngelScript line callback asks active scripts to abort on their own script thread. Native code blocked inside a callback cannot be cancelled; in that case stopping returns `SIGILHOOK_ERROR_BUSY`, and the hooks and engine remain alive. Do not unload the DLL; retry from a native thread or terminate the host process. Calling stop from an active AngelScript context also returns `SIGILHOOK_ERROR_BUSY`. Process termination does not require runtime teardown.
 
+On Windows, the injected DLL also starts a local named pipe for manual script
+hot reload. Run `SigilHookReload.bat` from the build output, install directory,
+or release package; it connects to `\\.\pipe\SigilHook` and waits for the `OK`
+request acknowledgement. The pipe worker then reloads the current script
+directory: it stops the loaded AngelScript application, reruns
+`main.as::main()`, and logs the result to
+`<SigilHook.dll directory>\SigilHook\logs\SigilHook.log`. The acknowledgement
+means only that the reload request was accepted, not that the new script
+compiled. A reload fails with `BUSY` while a script callback cannot quiesce; no
+scripts or hooks are unloaded in that case. A failed reload still stops the
+partially started replacement runtime, so the caller can fix `main.as` and load
+the directory again. The pipe is local-only and the first version supports one
+SigilHook host process per Windows session.
+
+Native callers can also trigger the same path directly with
+`sigilhook_runtime_reload()` or `sigilhook_runtime_reload_with_timeout()`. Scripts
+can call `shReloadStatus()` and `shReloadWithTimeoutStatus(timeoutMs)`, but
+normal hook callbacks should not reload the module that is currently executing.
+
 ## Standard helper API
 
 `scripts/SigilHook.ash` exposes the complete script-facing helper surface. It includes both convenience functions that install immediately
@@ -98,7 +117,7 @@ The complete interface is grouped as follows:
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 Exact argument types and `out` parameters are defined in
 [`scripts/SigilHook.ash`](scripts/SigilHook.ash). Native callers should use
@@ -270,9 +289,11 @@ Main artifacts:
 
 ```text
 _build-x64/SigilHook.dll
+_build-x64/SigilHookReload.bat
 _build-x64/SigilHook.lib
 _build-x64/SigilHookImport.lib
 _build-x86/SigilHook.dll
+_build-x86/SigilHookReload.bat
 _build-x86/SigilHook.lib
 _build-x86/SigilHookImport.lib
 ```
@@ -309,6 +330,7 @@ Each package contains the deployable runtime layout:
 
 ```text
 SigilHook.dll
+SigilHookReload.bat
 SigilHook/
   SigilHook.ash
 ```

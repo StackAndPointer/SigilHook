@@ -139,6 +139,20 @@ sigilhook_runtime_stop();
 
 Call `sigilhook_runtime_stop()` before unloading the DLL. Runtime teardown must not run from `DllMain` while the Windows loader lock is active. This is a required protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; use `sigilhook_runtime_stop_with_timeout(timeout_ms)` to choose another timeout. Stopping first rejects new script callbacks and the AngelScript line callback asks active scripts to abort on their own script thread. Native code blocked inside a callback cannot be cancelled; if it does not exit before the deadline, the function returns `SIGILHOOK_ERROR_BUSY` and the hooks, module, and engine remain alive. Do not unload the DLL; retry from a native thread or terminate the host process. Calling stop from an active AngelScript context also returns `SIGILHOOK_ERROR_BUSY`. Process termination does not require runtime teardown.
 
+On Windows, the injected DLL also starts a local named pipe for manual script
+hot reload. Run `SigilHookReload.bat` from the build output, install directory,
+or release package; it connects to `\\.\pipe\SigilHook` and waits for the `OK`
+request acknowledgement. The pipe worker then reloads the current script
+directory: it stops the loaded AngelScript application, reruns
+`main.as::main()`, and logs the result to
+`<SigilHook.dll directory>\SigilHook\logs\SigilHook.log`. The acknowledgement
+means only that the reload request was accepted, not that the new script
+compiled. A reload fails with `BUSY` while a script callback cannot quiesce; no
+scripts or hooks are unloaded in that case. A failed reload still stops the
+partially started replacement runtime, so the caller can fix `main.as` and load
+the directory again. The pipe is local-only and the first version supports one
+SigilHook host process per Windows session.
+
 The DLL itself is not an injector. The host still needs a process-injection mechanism, and the injected DLL must match the target process architecture.
 
 ## 4. Script modules and includes
@@ -238,7 +252,7 @@ The standard header is the public script API. Its functions are grouped below:
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 The exact declarations, parameter widths, return values, and `out` parameters
 are defined by [`scripts/SigilHook.ash`](../scripts/SigilHook.ash). Native
@@ -489,7 +503,7 @@ shSetSharedU64("seed", 42);
 uint64 seed = shSharedU64("seed");
 ```
 
-Status forms are `shSetSharedU64Status()` and `shSharedU64Status()`. `shCallEntry("void myEntry()")` invokes a function in the loaded application module. `shLoadDirectory()` is available for explicit loading, but the normal deployment path is the DLL autoload described above.
+Status forms are `shSetSharedU64Status()` and `shSharedU64Status()`. `shCallEntry("void myEntry()")` invokes a function in the loaded application module. `shLoadDirectory()` is available for explicit loading, but the normal deployment path is the DLL autoload described above. `shReloadStatus()` and `shReloadWithTimeoutStatus(timeoutMs)` stop and reload the current application; call them from native-driven tools rather than from a callback that is currently executing in that module.
 
 ## 11. Error handling and logs
 
