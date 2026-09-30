@@ -24,8 +24,14 @@ notice is retained in `LICENSE`.
 - License: zlib-style permissive license
 - License file: [`third_party/angelscript/LICENSE.md`](third_party/angelscript/LICENSE.md)
 
-The bundled AngelScript source is not modified by SigilHook. Its original source
-notices and license text must be retained.
+The bundled AngelScript SDK is used under its original zlib-style license.
+SigilHook carries build-integration changes around the bundled AngelScript
+project, including its CMake project files, and adds surrounding runtime
+integration code. Those SigilHook-specific changes are Copyright (c) 2026
+StackAndPointer and are not part of official AngelScript.
+
+The original AngelScript source notices and license text are retained, and the
+AngelScript core is not represented as a SigilHook-owned implementation.
 
 ## AsmJit
 
