@@ -118,6 +118,7 @@ SigilHook/
 
 ```text
 <host>\SigilHook.dll
+<host>\SigilHookReload.bat
 <host>\SigilHook\main.as
 <host>\SigilHook\feature.as
 <host>\SigilHook\include\*.ash
@@ -136,7 +137,14 @@ sigilhook_runtime_stop();
 
 卸载 DLL 前必须调用 `sigilhook_runtime_stop()`。这是强制协议：运行时启动期间绝不能直接调用 `FreeLibrary`。运行时清理不能在 Windows loader lock 下的 `DllMain` 中执行。默认停止超时为 5000 毫秒，也可以使用 `sigilhook_runtime_stop_with_timeout(timeout_ms)` 指定超时。停止时会先拒绝新的脚本回调，并由 AngelScript 的 line callback 在脚本自身线程中请求活动脚本中止。若原生代码阻塞在回调中，运行时无法强制取消；到达截止时间后会返回 `SIGILHOOK_ERROR_BUSY`，此时 Hook、模块和引擎仍然有效，不要卸载 DLL，应从原生线程重试停止或终止宿主进程。从活动 AngelScript context 内调用 stop 同样会返回 `SIGILHOOK_ERROR_BUSY`。进程终止不需要运行时清理。
 
-在 Windows 上，注入 DLL 还会启动一个仅限本机的命名管道，用于手动热重载脚本。运行构建输出目录、安装目录或发布包中的 `SigilHookReload.bat`，它会连接 `\\.\pipe\SigilHook` 并等待 `OK` 请求确认。随后管道工作线程会重载当前脚本目录：停止已加载的 AngelScript 应用，重新执行 `main.as::main()`，并把结果写入 `<SigilHook.dll 所在目录>\SigilHook\logs\SigilHook.log`。`OK` 只表示请求已被接受，不表示新脚本编译成功。当脚本回调无法在超时内静默下来时，重载失败并返回 `BUSY`，此时不会卸载任何脚本或 Hook。重载失败时，部分启动的新运行时会再次停止，因此可以直接修复 `main.as` 后重新加载目录。该管道只接受本机连接，第一版同一 Windows 会话只支持一个 SigilHook 宿主进程。
+在 Windows 上，注入 DLL 还会启动一个仅限本机的命名管道，用于手动热重载脚本。每个宿主进程拥有自己的管道 `\\.\pipe\SigilHook.<pid>`，因此多个被注入进程可以同时存在。运行构建输出目录、安装目录或发布包中的 `SigilHookReload.bat`：
+
+```bat
+SigilHookReload.bat            重载所有在线的 SigilHook 宿主
+SigilHookReload.bat <pid>      只重载指定进程号的宿主
+```
+
+脚本会枚举在线的 `SigilHook.<pid>` 管道，连接被选中的每一个并等待 `OK` 请求确认。随后对应宿主的管道工作线程会重载它自己的脚本目录：停止已加载的 AngelScript 应用，重新执行 `main.as::main()`，并把结果写入 `<SigilHook.dll 所在目录>\SigilHook\logs\SigilHook.log`。`OK` 只表示请求已被接受，不表示新脚本编译成功。当脚本回调无法在超时内静默下来时，重载失败并返回 `BUSY`，此时不会卸载任何脚本或 Hook。重载失败时，部分启动的新运行时会再次停止，因此可以直接修复 `main.as` 后重新加载目录。该管道只接受本机连接。
 
 原生宿主也可以直接调用 `sigilhook_runtime_reload()` 或 `sigilhook_runtime_reload_with_timeout()` 触发同一路径。脚本可以调用 `shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)`，但普通 Hook 回调不应重载正在执行的模块。
 
@@ -230,10 +238,10 @@ SH_ERROR_EXCEPTION
 | --- | --- |
 | 运行时与状态 | `shIsValidHook`、`shApiVersion`、`shBuildMode`、`shIsX86`、`shIsX64`、`shPointerSize`、`shRegisterAvailable`、`shRegisterWritable`、`shClearLastError`、`shLastError`、`shLog`、`shStatusString` |
 | Hook 创建 | `shHookScript`、`shHookMid`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
-| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc` |
+| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shResumeMid` |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
 | 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
-| 寄存器与控制流 | `shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
+| 寄存器与控制流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
 | 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
 | 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
@@ -413,7 +421,7 @@ shSetReg16(SH_REG_CX, low + 1);
 - 宽度写入在架构允许时保留 frame 中高于该宽度的位。x86 物理 32 位寄存器写入会遵循硬件零扩展，因此不要依赖 x86 的高 32 位值。
 - `SP` 可读但不可写。
 - x86 不提供 `R8..R15`。
-- XMM0-7 在 x86 可用，XMM0-15 在 x64 可用。每个 XMM 值暴露两个 64 位 lane：lane 0 是低 64 位，lane 1 是高 64 位；`shXmmFloat()` 和 `shSetXmmFloat()` 使用 lane 0 操作 `float`，`shXmmDouble()` 和 `shSetXmmDouble()` 使用 lane 0 操作 `double`。x64 浮点参数会通过 XMM 同步；x86 标准浮点参数位于栈上，修改传给原函数的浮点参数使用 `shSetArg()`。
+- XMM0-7 在 x86 可用，XMM0-15 在 x64 可用。每个 XMM 值暴露两个 64 位 lane：lane 0 是低 64 位，lane 1 是高 64 位；`shXmmFloat()` 和 `shSetXmmFloat()` 使用 lane 0 操作 `float`，`shXmmDouble()` 和 `shSetXmmDouble()` 使用 lane 0 操作 `double`；`shFloatBits()`/`shBitsFloat()` 与 `shDoubleBits()`/`shBitsDouble()` 可在浮点值和整数位表示之间转换。x64 浮点参数会通过 XMM 同步；x86 标准浮点参数位于栈上，修改传给原函数的浮点参数使用 `shSetArg()`。
 - 段、控制和调试寄存器暂不包含在当前 API 中。
 
 ```angelscript

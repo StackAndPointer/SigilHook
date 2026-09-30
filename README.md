@@ -55,18 +55,25 @@ the original function.
 The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop()` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock. This is a required unload protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; `sigilhook_runtime_stop_with_timeout()` can select another timeout. During shutdown, the runtime rejects new callbacks and the AngelScript line callback asks active scripts to abort on their own script thread. Native code blocked inside a callback cannot be cancelled; in that case stopping returns `SIGILHOOK_ERROR_BUSY`, and the hooks and engine remain alive. Do not unload the DLL; retry from a native thread or terminate the host process. Calling stop from an active AngelScript context also returns `SIGILHOOK_ERROR_BUSY`. Process termination does not require runtime teardown.
 
 On Windows, the injected DLL also starts a local named pipe for manual script
-hot reload. Run `SigilHookReload.bat` from the build output, install directory,
-or release package; it connects to `\\.\pipe\SigilHook` and waits for the `OK`
-request acknowledgement. The pipe worker then reloads the current script
-directory: it stops the loaded AngelScript application, reruns
-`main.as::main()`, and logs the result to
+hot reload. Each host owns its own pipe named `\\.\pipe\SigilHook.<pid>`, so
+several injected processes can coexist. Run `SigilHookReload.bat` from the build
+output, install directory, or release package:
+
+```bat
+SigilHookReload.bat            rem reload every live SigilHook host
+SigilHookReload.bat <pid>      rem reload only the host with that process id
+```
+
+The script finds the live `SigilHook.<pid>` pipes, connects to each selected
+one, and waits for the `OK` request acknowledgement. The pipe worker then
+reloads that host's current script directory: it stops the loaded AngelScript
+application, reruns `main.as::main()`, and logs the result to
 `<SigilHook.dll directory>\SigilHook\logs\SigilHook.log`. The acknowledgement
 means only that the reload request was accepted, not that the new script
 compiled. A reload fails with `BUSY` while a script callback cannot quiesce; no
 scripts or hooks are unloaded in that case. A failed reload still stops the
 partially started replacement runtime, so the caller can fix `main.as` and load
-the directory again. The pipe is local-only and the first version supports one
-SigilHook host process per Windows session.
+the directory again. The pipes are local-only.
 
 Native callers can also trigger the same path directly with
 `sigilhook_runtime_reload()` or `sigilhook_runtime_reload_with_timeout()`. Scripts
@@ -108,12 +115,12 @@ The complete interface is grouped as follows:
 
 | Group | Functions |
 | --- | --- |
-| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
+| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
 | Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
-| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shResumeMid` |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
@@ -145,7 +152,7 @@ shSetReg16(SH_REG_CX, low + 1);
 
 Register names are case-insensitive: `AX/CX/DX/BX/SP/BP/SI/DI/R8..R15`, including
 the usual `EAX/RAX`, `R8D/R8W/R8B` aliases. x86 frames expose only `AX` through
-`DI`. `SP` is read-only. XMM0-7 are available on x86 and XMM0-15 on x64. Lane 0 is the low 64 bits and lane 1 is the high 64 bits; float and double helpers use lane 0. Segment, control, and debug registers are not included. Flags are restored before an original call or final return, but values
+`DI`. `SP` is read-only. XMM0-7 are available on x86 and XMM0-15 on x64. Lane 0 is the low 64 bits and lane 1 is the high 64 bits; float and double helpers use lane 0. `shFloatBits`/`shBitsFloat` and `shDoubleBits`/`shBitsDouble` convert between floating-point values and their integer bit representations. Segment, control, and debug registers are not included. Flags are restored before an original call or final return, but values
 such as direction and trap state should not be relied on across a language ABI.
 
 A mapped argument is available through both `shArg` and its register alias. If
@@ -244,7 +251,8 @@ void beforeUpdate() {
 }
 ```
 
-AngelScript callbacks can read and write XMM registers with `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, and `shSetXmmDouble`. XMM0-7 are available on x86 and XMM0-15 on x64; lane 0 is the low 64 bits and lane 1 is the high 64 bits. Float and double helpers use lane 0. x64 floating-point arguments are synchronized through XMM; x86 standard floating-point arguments use `shSetArg` because they are passed on the stack.
+AngelScript callbacks can read and write XMM registers with `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, and `shSetXmmDouble`; use `shFloatBits`/`shBitsFloat` and `shDoubleBits`/`shBitsDouble` to convert between floating-point values and their integer representations. XMM0-7 are available on x86 and XMM0-15 on x64; lane 0 is the low 64 bits and lane 1 is the high 64 bits. Float and double helpers use lane 0. x64 floating-point arguments are synchronized through XMM; x86 standard floating-point arguments use `shSetArg` because they are passed on the stack.
+
 ## C ABI
 
 The public C interface is `include/sigilhook.h`. It exposes opaque handles and
@@ -344,6 +352,7 @@ include/
   sigilhook.h
 SigilHook/
   SigilHook.ash
+THIRD_PARTY_NOTICES.md
 ```
 
 ## License and acknowledgements

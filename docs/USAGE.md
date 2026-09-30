@@ -121,6 +121,7 @@ The expected application layout is:
 
 ```text
 <host>\SigilHook.dll
+<host>\SigilHookReload.bat
 <host>\SigilHook\main.as
 <host>\SigilHook\feature.as
 <host>\SigilHook\include\*.ash
@@ -140,18 +141,25 @@ sigilhook_runtime_stop();
 Call `sigilhook_runtime_stop()` before unloading the DLL. Runtime teardown must not run from `DllMain` while the Windows loader lock is active. This is a required protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; use `sigilhook_runtime_stop_with_timeout(timeout_ms)` to choose another timeout. Stopping first rejects new script callbacks and the AngelScript line callback asks active scripts to abort on their own script thread. Native code blocked inside a callback cannot be cancelled; if it does not exit before the deadline, the function returns `SIGILHOOK_ERROR_BUSY` and the hooks, module, and engine remain alive. Do not unload the DLL; retry from a native thread or terminate the host process. Calling stop from an active AngelScript context also returns `SIGILHOOK_ERROR_BUSY`. Process termination does not require runtime teardown.
 
 On Windows, the injected DLL also starts a local named pipe for manual script
-hot reload. Run `SigilHookReload.bat` from the build output, install directory,
-or release package; it connects to `\\.\pipe\SigilHook` and waits for the `OK`
-request acknowledgement. The pipe worker then reloads the current script
-directory: it stops the loaded AngelScript application, reruns
-`main.as::main()`, and logs the result to
+hot reload. Each host owns its own pipe named `\\.\pipe\SigilHook.<pid>`, so
+several injected processes can coexist. Run `SigilHookReload.bat` from the build
+output, install directory, or release package:
+
+```bat
+SigilHookReload.bat            rem reload every live SigilHook host
+SigilHookReload.bat <pid>      rem reload only the host with that process id
+```
+
+The script finds the live `SigilHook.<pid>` pipes, connects to each selected
+one, and waits for the `OK` request acknowledgement. The pipe worker then
+reloads that host's current script directory: it stops the loaded AngelScript
+application, reruns `main.as::main()`, and logs the result to
 `<SigilHook.dll directory>\SigilHook\logs\SigilHook.log`. The acknowledgement
 means only that the reload request was accepted, not that the new script
 compiled. A reload fails with `BUSY` while a script callback cannot quiesce; no
 scripts or hooks are unloaded in that case. A failed reload still stops the
 partially started replacement runtime, so the caller can fix `main.as` and load
-the directory again. The pipe is local-only and the first version supports one
-SigilHook host process per Windows session.
+the directory again. The pipes are local-only.
 
 The DLL itself is not an injector. The host still needs a process-injection mechanism, and the injected DLL must match the target process architecture.
 
@@ -243,12 +251,12 @@ The standard header is the public script API. Its functions are grouped below:
 
 | Group | Functions |
 | --- | --- |
-| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shRegisterAvailable`, `shRegisterWritable`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
+| Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
 | Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
-| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shResumeMid` |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
@@ -429,7 +437,7 @@ Semantics:
 - Width-specific setters preserve bits above the selected width in the callback frame where the architecture permits it. A 32-bit write in a physical x86 register follows hardware zero-extension, so do not depend on an x86 upper 32-bit value.
 - `SP` is readable but read-only.
 - `R8..R15` are unavailable on x86.
-- XMM0-7 are available on x86 and XMM0-15 on x64. Each XMM value exposes two 64-bit lanes: lane 0 is the low 64 bits and lane 1 is the high 64 bits. `shXmmFloat()` and `shSetXmmFloat()` use lane 0 for `float`; `shXmmDouble()` and `shSetXmmDouble()` use lane 0 for `double`. On x64, floating-point arguments are synchronized through XMM registers. On x86, standard floating-point arguments are stack-based, so use `shSetArg()` to change the argument passed to the original function.
+- XMM0-7 are available on x86 and XMM0-15 on x64. Each XMM value exposes two 64-bit lanes: lane 0 is the low 64 bits and lane 1 is the high 64 bits. `shXmmFloat()` and `shSetXmmFloat()` use lane 0 for `float`; `shXmmDouble()` and `shSetXmmDouble()` use lane 0 for `double`. `shFloatBits()`/`shBitsFloat()` and `shDoubleBits()`/`shBitsDouble()` convert between floating-point values and their integer bit representations. On x64, floating-point arguments are synchronized through XMM registers. On x86, standard floating-point arguments are stack-based, so use `shSetArg()` to change the argument passed to the original function.
 - Segment, control, and debug registers are outside the current API.
 
 ```angelscript
