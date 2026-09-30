@@ -12,7 +12,11 @@ HMODULE g_runtimeModule = nullptr;
 HANDLE g_pipeThread = nullptr;
 HANDLE g_pipeStopEvent = nullptr;
 
-constexpr wchar_t kHotReloadPipeName[] = L"\\\\.\\pipe\\SigilHook";
+// The pipe is per-process so several injected hosts can coexist. The batch
+// trigger discovers every live pipe by its SigilHook.<pid> suffix.
+std::wstring hotReloadPipeName() {
+    return L"\\\\.\\pipe\\SigilHook." + std::to_wstring(GetCurrentProcessId());
+}
 
 void disconnectAndStopPipe() {
     if (g_pipeThread == nullptr && g_pipeStopEvent == nullptr) {
@@ -33,12 +37,13 @@ void disconnectAndStopPipe() {
 }
 
 DWORD WINAPI hotReloadPipeThread(LPVOID) {
+    const std::wstring pipeName = hotReloadPipeName();
     while (g_pipeStopEvent == nullptr || WaitForSingleObject(g_pipeStopEvent, 0) != WAIT_OBJECT_0) {
         // A client connects and receives an acknowledgement before the reload
         // starts. The pipe is a request channel; the worker thread owns the
         // actual stop/start sequence.
         HANDLE pipe = CreateNamedPipeW(
-            kHotReloadPipeName,
+            pipeName.c_str(),
             PIPE_ACCESS_OUTBOUND,
             PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,

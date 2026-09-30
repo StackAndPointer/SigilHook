@@ -122,11 +122,13 @@ jobs:
           cp "${{ matrix.build_dir }}/libSigilHook.a" "${package_root}/libSigilHook.a"
           cp scripts/SigilHook.ash "${package_root}/SigilHook/SigilHook.ash"
           cp include/sigilhook.h "${package_root}/include/sigilhook.h"
+          cp THIRD_PARTY_NOTICES.md "${package_root}/THIRD_PARTY_NOTICES.md"
           cat > "${package_root}/README.txt" <<'EOF'
           SigilHook GCC Linux development package
 
-          This package contains the static Linux library and headers used by
-          the GCC build. It is not a Windows injectable DLL package.
+          This package contains the static Linux library, headers, the standard
+          SigilHook.ash helper, and third-party notices used by the GCC build.
+          It is not a Windows injectable DLL package.
           EOF
           (
             cd "${package_root}"
@@ -148,8 +150,7 @@ jobs:
           cmake --build "${{ matrix.build_dir }}"
           --config Release
           --parallel
-          --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest
-          --target SigilHookHotReloadSmokeTest
+          --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest SigilHookHotReloadSmokeTest
 
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}

@@ -802,6 +802,12 @@ int testNativeBindingBlob() {
 
 } // namespace
 
+int testRuntimeReloadContract() {
+    CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_NOT_FOUND);
+    CHECK(sigilhook_runtime_reload_with_timeout(100) == SIGILHOOK_ERROR_NOT_FOUND);
+    return 0;
+}
+
 int main() {
     sigilhook_set_log_callback(printLog, nullptr);
     CHECK(testBasicJitDetour() == 0);
@@ -813,6 +819,7 @@ int main() {
     CHECK(testUsercall() == 0);
     CHECK(testXmmUsercall() == 0);
     CHECK(testPointerUsercall() == 0);
+    CHECK(testRuntimeReloadContract() == 0);
 #if defined(SIGILHOOK_NATIVE_BINDING_TEST)
     CHECK(testNativeBindingBlob() == 0);
 #endif
