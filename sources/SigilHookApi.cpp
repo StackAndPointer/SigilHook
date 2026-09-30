@@ -202,6 +202,14 @@ void writeStackArgument(
     std::memcpy(destination, &value, width);
 }
 
+void writeXmmArgument(
+    const SIGILHOOK::ILCallback::Parameters* parameters, uint8_t reg, uint8_t width, uint64_t value) {
+    if (reg >= SIGILHOOK_XMM_COUNT || width == 0 || width > sizeof(value)) return;
+    auto* destination = reinterpret_cast<uint8_t*>(
+        const_cast<uint64_t*>(&parameters->m_xmm[reg][0]));
+    std::memcpy(destination, &value, width);
+}
+
 bool beginJitCallback(const std::shared_ptr<JitRecord>& record) {
     std::lock_guard lock(record->callbackMutex);
     if (!record->acceptingCallbacks) return false;
@@ -240,12 +248,13 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
     registers->write_mask = 0;
     auto* xmm = reinterpret_cast<sigilhook_xmm_context*>(
         const_cast<uint64_t*>(&parameters->m_xmm[0][0]));
-    xmm->write_mask = 0;
-    const size_t availableXmm = currentMode() == SIGILHOOK::Mode::x64 ? SIGILHOOK_XMM_COUNT : 8;
-    for (size_t index = availableXmm; index < SIGILHOOK_XMM_COUNT; ++index) {
-        xmm->values[index][0] = 0;
-        xmm->values[index][1] = 0;
+    if (currentMode() != SIGILHOOK::Mode::x64) {
+        for (size_t index = 8; index < SIGILHOOK_XMM_COUNT; ++index) {
+            xmm->values[index][0] = 0;
+            xmm->values[index][1] = 0;
+        }
     }
+    xmm->write_mask = 0;
 
     std::vector<uint64_t> arguments(count);
     std::vector<uint64_t> originalArguments(count);
@@ -258,6 +267,11 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
             const uint8_t reg = layout.arguments[index].reg;
             const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
             registers->registers[reg] = arguments[index] & mask;
+        } else if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::XmmRegister) {
+            const uint8_t reg = layout.arguments[index].reg;
+            const uint64_t mask = width == sizeof(uint64_t) ? ~uint64_t{0} : (uint64_t{1} << (width * 8)) - 1;
+            arguments[index] = xmm->values[reg][0] & mask;
+            originalArguments[index] = arguments[index];
         }
     }
 
@@ -298,7 +312,9 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
                 xmm->values[reg][0] = width == sizeof(uint64_t)
                     ? arguments[index]
                     : (lane & ~mask) | (arguments[index] & mask);
+                xmm->write_mask |= bit;
             }
+            writeXmmArgument(parameters, reg, width, arguments[index]);
         } else if (index < layout.arguments.size() && layout.arguments[index].kind == SIGILHOOK::ILCallback::ArgumentLocation::Kind::Stack) {
             writeStackArgument(parameters, layout.arguments[index].stackOffset, width, arguments[index]);
             if (arguments[index] != originalArguments[index]) argumentsChanged = true;
@@ -311,13 +327,6 @@ void dispatchJitSlot(size_t slot, const SIGILHOOK::ILCallback::Parameters* param
         const uint8_t reg = static_cast<uint8_t>(layout.returnRegister);
         if ((registers->write_mask & (uint64_t{1} << reg)) != 0) {
             result->m_retVal = registers->registers[reg];
-            result->m_overrideReturn = 1;
-        }
-    } else if (layout.returnXmmRegister >= 0) {
-        const uint8_t reg = static_cast<uint8_t>(layout.returnXmmRegister);
-        if (result->m_overrideReturn == 0 && (result->m_callOriginal == 0 || !argumentsChanged) &&
-            (xmm->write_mask & (uint64_t{1} << reg)) != 0) {
-            result->m_retVal = xmm->values[reg][0];
             result->m_overrideReturn = 1;
         }
     }

@@ -94,6 +94,7 @@ namespace SIGILHOOK {
 		// Supported standard conventions are cdecl, stdcall, fastcall, thiscall, and vectorcall.
 		// A custom convention has the form:
 		//   usercall:ret=eax;arg0=ecx;arg1=stack+8;cleanup=8
+		// XMM argument locations are accepted; vector-register return locations are not.
 		uint64_t getJitFunc(
 			const std::string& retType,
 			const std::vector<std::string>& paramTypes,

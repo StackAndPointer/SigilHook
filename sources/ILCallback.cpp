@@ -84,6 +84,16 @@ bool isRegisterName(const std::string& value) {
 	return registerFromName(value, asmjit::Arch::kX64) >= 0;
 }
 
+int xmmRegisterFromName(const std::string& value) {
+	const std::string name = lowerCopy(trimCopy(value));
+	if (name.rfind("xmm", 0) != 0) return -1;
+	uint32_t index = 0;
+	if (!parseUnsigned(name.substr(3), &index) || index >= SIGILHOOK_XMM_COUNT) return -1;
+	return static_cast<int>(index);
+}
+
+
+
 bool isStackLocation(const std::string& value) {
 	return lowerCopy(trimCopy(value)).rfind("stack+", 0) == 0;
 }
@@ -234,6 +244,7 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 	m_callLayout.arguments.resize(paramTypes.size());
 	std::vector<bool> assigned(paramTypes.size(), false);
 	std::vector<bool> usedRegisters(SIGILHOOK_REGISTER_COUNT, false);
+	std::vector<bool> usedXmmRegisters(SIGILHOOK_XMM_COUNT, false);
 	bool hasReturn = false;
 	bool hasCleanup = false;
 	for (const std::string& rawToken : tokens) {
@@ -261,21 +272,26 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 				return fail("A non-void usercall requires a return register");
 			}
 			if (value != "none") {
-				const int reg = registerFromName(value, arch);
-				if (reg < 0 || reg == SIGILHOOK_REGISTER_SP) {
-					if (outError != nullptr) *outError = "Invalid usercall return register: " + value;
-					return fail("Invalid usercall return register: " + value);
+				if (xmmRegisterFromName(value) >= 0) {
+					if (outError != nullptr) *outError = "XMM is not a supported usercall return register: " + value;
+					return fail("Unsupported usercall return register: " + value);
+				} else {
+					const int reg = registerFromName(value, arch);
+					if (reg < 0 || reg == SIGILHOOK_REGISTER_SP) {
+						if (outError != nullptr) *outError = "Invalid usercall return register: " + value;
+						return fail("Invalid usercall return register: " + value);
+					}
+					if (arch == asmjit::Arch::kX86 && reg >= SIGILHOOK_REGISTER_R8) {
+						if (outError != nullptr) *outError = "x86 usercall cannot use R8-R15";
+						return fail("x86 usercall cannot use R8-R15");
+					}
+					if (usedRegisters[reg]) {
+						if (outError != nullptr) *outError = "Duplicate or overlapping usercall register: " + value;
+						return fail("Duplicate or overlapping usercall register: " + value);
+					}
+					usedRegisters[reg] = true;
+					m_callLayout.returnRegister = reg;
 				}
-				if (arch == asmjit::Arch::kX86 && reg >= SIGILHOOK_REGISTER_R8) {
-					if (outError != nullptr) *outError = "x86 usercall cannot use R8-R15";
-					return fail("x86 usercall cannot use R8-R15");
-				}
-				if (usedRegisters[reg]) {
-					if (outError != nullptr) *outError = "Duplicate or overlapping usercall register: " + value;
-					return fail("Duplicate or overlapping usercall register: " + value);
-				}
-				usedRegisters[reg] = true;
-				m_callLayout.returnRegister = reg;
 			}
 			continue;
 		}
@@ -313,6 +329,20 @@ bool SIGILHOOK::ILCallback::parseCallLayout(
 		if (width == 0) {
 			if (outError != nullptr) *outError = "Unsupported usercall parameter type: " + paramTypes[argIndex];
 			return fail("Unsupported usercall parameter type: " + paramTypes[argIndex]);
+		}
+		if (const int xmmReg = xmmRegisterFromName(value); xmmReg >= 0) {
+			if (arch == asmjit::Arch::kX86 && xmmReg >= 8) {
+				if (outError != nullptr) *outError = "x86 usercall cannot use XMM8-XMM15";
+				return fail("x86 usercall cannot use XMM8-XMM15");
+			}
+			if (usedXmmRegisters[xmmReg]) {
+				if (outError != nullptr) *outError = "Duplicate usercall XMM register: " + value;
+				return fail("Duplicate usercall XMM register: " + value);
+			}
+			usedXmmRegisters[xmmReg] = true;
+			m_callLayout.arguments[argIndex].kind = ArgumentLocation::Kind::XmmRegister;
+			m_callLayout.arguments[argIndex].reg = static_cast<uint8_t>(xmmReg);
+			continue;
 		}
 		if (isRegisterName(value)) {
 			const int reg = registerFromName(value, arch);
@@ -498,12 +528,21 @@ uint64_t SIGILHOOK::ILCallback::getInvokeJitFunc(
 		}
 		loadRegister(SIGILHOOK_REGISTER_R11);
 		loadRegister(SIGILHOOK_REGISTER_R10);
+		for (size_t index = 0; index < m_callLayout.arguments.size(); ++index) {
+			const auto& location = m_callLayout.arguments[index];
+			if (location.kind != ArgumentLocation::Kind::XmmRegister) continue;
+			a.mov(asmjit::x86::r10, asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset));
+			a.movq(
+				asmjit::x86::xmm(location.reg),
+				asmjit::x86::qword_ptr(asmjit::x86::r10, static_cast<int32_t>(index * sizeof(uint64_t))));
+		}
 
 		a.call(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 8));
 		if (m_callLayout.returnRegister >= 0) {
 			a.mov(asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 16),
 				gpRegister(arch, static_cast<uint32_t>(m_callLayout.returnRegister)));
 			a.mov(asmjit::x86::rax, asmjit::x86::qword_ptr(asmjit::x86::rsp, localOffset + 16));
+
 		} else {
 			a.xor_(asmjit::x86::eax, asmjit::x86::eax);
 		}
@@ -552,11 +591,20 @@ uint64_t SIGILHOOK::ILCallback::getInvokeJitFunc(
 				a.mov(gpRegister(arch, reg), asmjit::x86::dword_ptr(asmjit::x86::edi, static_cast<int32_t>(index * sizeof(uint64_t))));
 			}
 		}
+		for (size_t index = 0; index < m_callLayout.arguments.size(); ++index) {
+			const auto& location = m_callLayout.arguments[index];
+			if (location.kind != ArgumentLocation::Kind::XmmRegister) continue;
+			a.mov(asmjit::x86::eax, asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset));
+			a.movq(
+				asmjit::x86::xmm(location.reg),
+				asmjit::x86::qword_ptr(asmjit::x86::eax, static_cast<int32_t>(index * sizeof(uint64_t))));
+		}
 		a.call(asmjit::x86::dword_ptr(asmjit::x86::esp, localOffset + 4));
 		a.add(asmjit::x86::esp, frameSize - m_callLayout.calleeCleanup);
 		a.xor_(asmjit::x86::edx, asmjit::x86::edx);
 		if (m_callLayout.returnRegister >= 0) {
 			a.mov(asmjit::x86::eax, gpRegister(arch, static_cast<uint32_t>(m_callLayout.returnRegister)));
+
 		} else {
 			a.xor_(asmjit::x86::eax, asmjit::x86::eax);
 		}
@@ -688,6 +736,7 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	writeMaskDestination.setSize(pointerSizeFromArch(arch));
 	cc.mov(writeMaskDestination, 0);
 	for (uint32_t xmmIndex = 0; xmmIndex < (arch == asmjit::Arch::kX64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+
 		asmjit::x86::Mem destination(argStruct, offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex);
 		cc.movdqu(destination, asmjit::x86::xmm(xmmIndex));
 	}
@@ -876,6 +925,12 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	a.lea(scratch, asmjit::x86::ptr(sp, static_cast<int32_t>(allocationSize)));
 	a.mov(asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_entryStack)), scratch);
 	a.mov(asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_registers) + sizeof(uint64_t) * SIGILHOOK_REGISTER_SP), scratch);
+	for (uint32_t xmmIndex = 0; xmmIndex < (is64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+		a.movdqu(
+			asmjit::x86::ptr(sp, static_cast<int32_t>(
+				stateOffset + offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex)),
+			asmjit::x86::xmm(xmmIndex));
+	}
 	if (is64) a.pushfq();
 	else a.pushfd();
 	a.pop(scratch);
@@ -883,6 +938,9 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	asmjit::x86::Mem writeMaskDestination = asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_writeMask));
 	writeMaskDestination.setSize(pointerSize);
 	a.mov(writeMaskDestination, 0);
+	asmjit::x86::Mem xmmWriteMaskDestination = asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_xmmWriteMask));
+	xmmWriteMaskDestination.setSize(pointerSize);
+	a.mov(xmmWriteMaskDestination, 0);
 	a.mov(asmjit::x86::dword_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_retVal)), 0);
 	a.mov(asmjit::x86::dword_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_retVal) + sizeof(uint32_t)), 0);
 	a.mov(asmjit::x86::byte_ptr(sp, stateOffset + retOffset + offsetof(ReturnValue, m_callOriginal)), 1);
@@ -895,6 +953,9 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		const int32_t argOffset = static_cast<int32_t>(offsetof(Parameters, m_arguments)) + static_cast<int32_t>(sizeof(uint64_t) * index);
 		if (location.kind == ArgumentLocation::Kind::Register) {
 			a.mov(scratch, asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_registers) + sizeof(uint64_t) * location.reg));
+			a.mov(asmjit::x86::ptr(sp, stateOffset + argOffset), scratch);
+		} else if (location.kind == ArgumentLocation::Kind::XmmRegister) {
+			a.movq(scratch, asmjit::x86::xmm(location.reg));
 			a.mov(asmjit::x86::ptr(sp, stateOffset + argOffset), scratch);
 		} else if (is64) {
 			a.mov(scratch, asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_entryStack)));
@@ -970,6 +1031,12 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		if (reg == SIGILHOOK_REGISTER_SP || reg == stateBaseRegister) continue;
 		a.mov(gpRegister(arch, reg), asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * reg));
 	}
+	for (uint32_t xmmIndex = 0; xmmIndex < (is64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+		a.movdqu(
+			asmjit::x86::xmm(xmmIndex),
+			asmjit::x86::ptr(stateBase, static_cast<int32_t>(
+				offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex)));
+	}
 	a.mov(stateBase, asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateBaseRegister));
 	if (is64) a.push(asmjit::x86::qword_ptr(sp, static_cast<int32_t>(frameSize + stateOffset + offsetof(Parameters, m_flags))));
 	else a.push(asmjit::x86::dword_ptr(sp, static_cast<int32_t>(frameSize + stateOffset + offsetof(Parameters, m_flags))));
@@ -989,6 +1056,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		a.mov(originalReturn, gpRegister(arch, m_callLayout.returnRegister));
 		a.bind(keepOriginalReturn);
 	}
+
 	a.jmp(finishOriginal);
 
 	a.bind(finishOriginal);
@@ -1001,6 +1069,7 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		a.mov(gpRegister(arch, m_callLayout.returnRegister), overriddenReturn);
 		a.bind(keepOriginalReturn);
 	}
+
 	a.jmp(sharedReturn);
 
 	a.bind(finishEarly);
@@ -1011,9 +1080,16 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 		a.mov(asmjit::x86::ptr(sp, stateOffset + offsetof(Parameters, m_registers) + sizeof(uint64_t) * m_callLayout.returnRegister), scratch2);
 	}
 	a.lea(stateBase, asmjit::x86::ptr(sp, stateOffset));
+
 	for (uint32_t reg = 0; reg < registerCount; ++reg) {
 		if (reg == SIGILHOOK_REGISTER_SP || reg == stateBaseRegister) continue;
 		a.mov(gpRegister(arch, reg), asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * reg));
+	}
+	for (uint32_t xmmIndex = 0; xmmIndex < (is64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+		a.movdqu(
+			asmjit::x86::xmm(xmmIndex),
+			asmjit::x86::ptr(stateBase, static_cast<int32_t>(
+				offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex)));
 	}
 	a.mov(stateBase, asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateBaseRegister));
 	a.jmp(sharedReturn);
@@ -1028,6 +1104,12 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	}
 	a.mov(stateCopy, stateBase);
 	a.mov(stateBase, asmjit::x86::ptr(stateBase, offsetof(Parameters, m_registers) + sizeof(uint64_t) * stateBaseRegister));
+	for (uint32_t xmmIndex = 0; xmmIndex < (is64 ? SIGILHOOK_XMM_COUNT : 8u); ++xmmIndex) {
+		a.movdqu(
+			asmjit::x86::xmm(xmmIndex),
+			asmjit::x86::ptr(stateCopy, static_cast<int32_t>(
+				offsetof(Parameters, m_xmm) + sizeof(uint64_t) * 2u * xmmIndex)));
+	}
 	if (is64) a.push(asmjit::x86::qword_ptr(sp, stateOffset + offsetof(Parameters, m_flags)));
 	else a.push(asmjit::x86::dword_ptr(sp, stateOffset + offsetof(Parameters, m_flags)));
 	if (is64) a.popfq(); else a.popfd();
