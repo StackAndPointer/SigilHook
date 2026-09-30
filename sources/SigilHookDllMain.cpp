@@ -4,10 +4,85 @@
 
 #if defined(_WIN32)
 #include <filesystem>
+#include <string>
 #include <windows.h>
 
 namespace {
 HMODULE g_runtimeModule = nullptr;
+HANDLE g_pipeThread = nullptr;
+HANDLE g_pipeStopEvent = nullptr;
+
+constexpr wchar_t kHotReloadPipeName[] = L"\\\\.\\pipe\\SigilHook";
+
+void disconnectAndStopPipe() {
+    if (g_pipeThread == nullptr && g_pipeStopEvent == nullptr) {
+        return;
+    }
+    if (g_pipeStopEvent != nullptr) {
+        SetEvent(g_pipeStopEvent);
+    }
+    if (g_pipeThread != nullptr) {
+        WaitForSingleObject(g_pipeThread, 5000);
+        CloseHandle(g_pipeThread);
+        g_pipeThread = nullptr;
+    }
+    if (g_pipeStopEvent != nullptr) {
+        CloseHandle(g_pipeStopEvent);
+        g_pipeStopEvent = nullptr;
+    }
+}
+
+DWORD WINAPI hotReloadPipeThread(LPVOID) {
+    while (g_pipeStopEvent == nullptr || WaitForSingleObject(g_pipeStopEvent, 0) != WAIT_OBJECT_0) {
+        // A client connects and receives an acknowledgement before the reload
+        // starts. The pipe is a request channel; the worker thread owns the
+        // actual stop/start sequence.
+        HANDLE pipe = CreateNamedPipeW(
+            kHotReloadPipeName,
+            PIPE_ACCESS_OUTBOUND,
+            PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            1,
+            4096,
+            0,
+            0,
+            nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            Sleep(250);
+            continue;
+        }
+        const bool connected = ConnectNamedPipe(pipe, nullptr) != FALSE ||
+            GetLastError() == ERROR_PIPE_CONNECTED;
+        if (connected) {
+            DWORD bytes = 0;
+            WriteFile(pipe, "OK\n", 3, &bytes, nullptr);
+            FlushFileBuffers(pipe);
+            DisconnectNamedPipe(pipe);
+            // The acknowledgement means the request arrived, not that the
+            // reload succeeded. Failures are recorded by the runtime log.
+            sigilhook_runtime_reload();
+        }
+        CloseHandle(pipe);
+    }
+    return 0;
+}
+
+bool startHotReloadPipe() {
+    if (g_pipeThread != nullptr) return true;
+    g_pipeStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (g_pipeStopEvent == nullptr) return false;
+    DWORD threadId = 0;
+    g_pipeThread = CreateThread(nullptr, 0, hotReloadPipeThread, nullptr, 0, &threadId);
+    if (g_pipeThread == nullptr) {
+        CloseHandle(g_pipeStopEvent);
+        g_pipeStopEvent = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void stopHotReloadPipe() {
+    disconnectAndStopPipe();
+}
 
 DWORD WINAPI runtimeThread(LPVOID parameter) {
     auto* instance = static_cast<HINSTANCE>(parameter);
@@ -31,6 +106,7 @@ DWORD WINAPI runtimeThread(LPVOID parameter) {
         if (g_runtimeModule != nullptr) FreeLibraryAndExitThread(g_runtimeModule, 1);
         return 1;
     }
+    startHotReloadPipe();
     if (g_runtimeModule != nullptr) FreeLibraryAndExitThread(g_runtimeModule, 0);
     return 0;
 }
@@ -59,8 +135,9 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         break;
     }
     case DLL_PROCESS_DETACH:
-        // Do not stop the runtime under the loader lock. Hosts must call
-        // sigilhook_runtime_stop() successfully before FreeLibrary.
+        // Do not tear down AngelScript under the loader lock. The host must
+        // call sigilhook_runtime_stop() before FreeLibrary.
+        stopHotReloadPipe();
         break;
     default:
         break;

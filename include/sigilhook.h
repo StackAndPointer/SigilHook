@@ -261,6 +261,8 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_start(const wcha
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop(void);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_stop_with_timeout(uint32_t timeout_ms);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_load_directory(const wchar_t* script_directory);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_reload(void);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_reload_with_timeout(uint32_t timeout_ms);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_set_shared_u64(const char* name, uint64_t value);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* name, uint64_t* out_value);

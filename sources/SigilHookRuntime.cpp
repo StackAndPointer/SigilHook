@@ -1014,6 +1014,14 @@ asBYTE scriptLoadDirectory(const std::string& directory) {
         fs::path(std::u8string(directory.begin(), directory.end())).c_str()));
 }
 
+asBYTE scriptReloadRuntime() {
+    return static_cast<asBYTE>(sigilhook_runtime_reload());
+}
+
+asBYTE scriptReloadRuntimeWithTimeout(asUINT timeoutMs) {
+    return static_cast<asBYTE>(sigilhook_runtime_reload_with_timeout(timeoutMs));
+}
+
 asBYTE scriptCallEntry(const std::string& declaration) {
     return static_cast<asBYTE>(sigilhook_runtime_call_entry(declaration.c_str()));
 }
@@ -1143,6 +1151,8 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 memProtectStatus(uint64, uint64, uint8, uint8 &out)", asFUNCTION(scriptStatusMemProtect), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 findPatternStatus(uint64, uint64, const string &in, uint64 &out)", asFUNCTION(scriptStatusFindPattern), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 loadDirectory(const string &in)", asFUNCTION(scriptLoadDirectory), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 reloadRuntime()", asFUNCTION(scriptReloadRuntime), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 reloadRuntimeWithTimeout(uint)", asFUNCTION(scriptReloadRuntimeWithTimeout), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 callEntry(const string &in)", asFUNCTION(scriptCallEntry), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 setSharedU64Status(const string &in, uint64)", asFUNCTION(scriptStatusSetSharedU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 sharedU64Status(const string &in, uint64 &out)", asFUNCTION(scriptStatusSharedU64), asCALL_CDECL);
@@ -1534,6 +1544,53 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
     return unloadSucceeded ? SIGILHOOK_OK : SIGILHOOK_ERROR_SCRIPT;
 }
 
+sigilhook_status reloadRuntime(uint32_t timeoutMs) {
+    if (asGetActiveContext() != nullptr) {
+        writeLog("runtime reload requested from an active script context; call it from a native thread");
+        return SIGILHOOK_ERROR_BUSY;
+    }
+    fs::path directory;
+    {
+        std::lock_guard lock(g_runtime.mutex);
+        if (!g_runtime.started || g_runtime.modules.empty()) {
+            writeLog("runtime reload skipped: no script application is loaded");
+            return SIGILHOOK_ERROR_NOT_FOUND;
+        }
+        directory = g_runtime.scriptDirectory;
+    }
+    if (directory.empty()) {
+        writeLog("runtime reload skipped: the script directory is not known");
+        return SIGILHOOK_ERROR_SCRIPT;
+    }
+
+    writeLog("runtime reload requested for " + directory.string());
+    const sigilhook_status stopStatus = stopRuntime(timeoutMs);
+    if (stopStatus != SIGILHOOK_OK) {
+        writeLog("runtime reload aborted: stop returned " + std::to_string(static_cast<int>(stopStatus)));
+        return stopStatus;
+    }
+
+    const sigilhook_status startStatus = startRuntime(directory);
+    if (startStatus != SIGILHOOK_OK) {
+        writeLog("runtime reload failed: start returned " + std::to_string(static_cast<int>(startStatus)));
+        return startStatus;
+    }
+    const sigilhook_status loadStatus = loadDirectory(directory);
+    if (loadStatus != SIGILHOOK_OK) {
+        writeLog("runtime reload failed: load returned " + std::to_string(static_cast<int>(loadStatus)));
+        // Keep the public runtime state consistent: a failed load leaves no
+        // application behind, so tear the freshly started engine back down.
+        const sigilhook_status cleanupStatus = stopRuntime(timeoutMs);
+        if (cleanupStatus != SIGILHOOK_OK) {
+            writeLog("runtime reload cleanup failed: stop returned " +
+                std::to_string(static_cast<int>(cleanupStatus)));
+        }
+        return loadStatus;
+    }
+    writeLog("runtime reload completed");
+    return SIGILHOOK_OK;
+}
+
 } // namespace
 
 extern "C" {
@@ -1557,6 +1614,14 @@ sigilhook_status SIGILHOOK_CALL sigilhook_runtime_load_directory(const wchar_t* 
         return SIGILHOOK_ERROR_INVALID_ARGUMENT;
     }
     return loadDirectory(fs::path(scriptDirectory));
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_reload(void) {
+    return reloadRuntime(SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS);
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_reload_with_timeout(uint32_t timeoutMs) {
+    return reloadRuntime(timeoutMs);
 }
 
 sigilhook_status SIGILHOOK_CALL sigilhook_runtime_set_shared_u64(const char* name, uint64_t value) {

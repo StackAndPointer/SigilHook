@@ -677,6 +677,14 @@ uint8 shLoadDirectory(const string &in directory) {
     return loadDirectory(directory);
 }
 
+uint8 shReloadStatus() {
+    return reloadRuntime();
+}
+
+uint8 shReloadWithTimeoutStatus(uint timeoutMs) {
+    return reloadRuntimeWithTimeout(timeoutMs);
+}
+
 uint8 shCallEntry(const string &in declaration) {
     return callEntry(declaration);
 }

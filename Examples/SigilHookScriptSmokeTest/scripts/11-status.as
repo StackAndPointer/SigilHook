@@ -139,8 +139,12 @@ void testStatusMemoryAndRuntime() {
         shSharedU64Status("statusLoopback", value) != SH_OK || value != 0x1234) {
         shSetSharedU64("scriptBad", 4044); return;
     }
+    // Reloading from inside a running script callback must be rejected: the
+    // runtime refuses to tear down the module that is currently executing.
     if (shCallEntry("void statusEntry()") != SH_OK || shSharedU64("statusEntry") != 1 ||
-        shLoadDirectory("") != SH_ERROR_INVALID_ARGUMENT) {
+        shLoadDirectory("") != SH_ERROR_INVALID_ARGUMENT ||
+        shReloadStatus() != SH_ERROR_BUSY ||
+        shReloadWithTimeoutStatus(100) != SH_ERROR_BUSY) {
         shSetSharedU64("scriptBad", 4045); return;
     }
     array<uint64> invalidArguments(1);

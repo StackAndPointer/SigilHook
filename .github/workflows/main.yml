@@ -149,6 +149,7 @@ jobs:
           --config Release
           --parallel
           --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest
+          --target SigilHookHotReloadSmokeTest
 
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}
@@ -162,6 +163,8 @@ jobs:
             -Destination (Join-Path $packageRoot "SigilHook.dll")
           Copy-Item -LiteralPath "${{ matrix.build_dir }}\SigilHook\SigilHook.ash" `
             -Destination (Join-Path $scriptRoot "SigilHook.ash")
+          Copy-Item -LiteralPath "scripts\SigilHookReload.bat" `
+            -Destination (Join-Path $packageRoot "SigilHookReload.bat")
           Compress-Archive -Path (Join-Path $packageRoot "*") `
             -DestinationPath (Join-Path $env:RUNNER_TEMP "$packageName.zip") -Force
 
