@@ -27,6 +27,7 @@ uint64 g_usercallHook = SH_INVALID_HANDLE;
 uint64 g_pointerHook = SH_INVALID_HANDLE;
 uint64 g_floatHook = SH_INVALID_HANDLE;
 uint64 g_midHook = SH_INVALID_HANDLE;
+uint64 g_entryContinueHook = SH_INVALID_HANDLE;
 uint64 g_xmmUsercallHook = SH_INVALID_HANDLE;
 uint64 g_nativeHook = SH_INVALID_HANDLE;
 uint64 g_breakpointHook = SH_INVALID_HANDLE;
@@ -54,7 +55,7 @@ void verifyHelperApi() {
     if (shApiVersion() < 0x00020004 ||
         shBuildMode() != uint8(shSharedU64("expectedBuildMode"))) { failHelperTest(); return; }
     if (shApiVersion() < 0x00020006) { failHelperTest(); return; }
-    if (shApiVersion() < 0x00020009) { failHelperTest(); return; }
+    if (shApiVersion() < 0x0002000A) { failHelperTest(); return; }
 
     g_helperStep = 202;
     if (shIsValidHook(SH_INVALID_HANDLE) || !shIsValidHook(1)) { failHelperTest(); return; }
@@ -287,6 +288,14 @@ void onFloat() {
     shKeepOriginal();
 }
 
+void onContext() {
+    SHCallContext@ ctx = currentContext();
+    if (ctx is null || ctx.getArg(0) != 35) { failHelperTest(); return; }
+    ctx.setArg(0, 35);
+    ctx.continueOriginal();
+}
+
+
 void onMid() {
     g_helperStep = 1012;
     if (!shResumeMid(g_midHook)) { failHelperTest(); return; }
@@ -323,8 +332,9 @@ void verify() {
         "void onConvention()", "int:int,int", "cdecl");
     if (!shIsValidHook(g_cdeclHook)) { failHelperTest(); return; }
     g_midHook = shHookMid(shSharedU64("midTarget"), "void onMid()", "int:int");
+    g_entryContinueHook = shHookEntryContinue(shSharedU64("midContextTarget"), "void onContext()", "int:int", "cdecl");
+    if (!shIsValidHook(g_entryContinueHook)) { failHelperTest(); return; }
     if (!shIsValidHook(g_midHook)) { failHelperTest(); return; }
-    g_helperStep = 102;
     g_stdcallHook = shHookConvention(shSharedU64("stdcallTarget"),
         "void onConvention()", "int:int,int", "stdcall");
     if (!shIsValidHook(g_stdcallHook)) { failHelperTest(); return; }
@@ -464,6 +474,7 @@ void cleanupTestHooks() {
     if (shIsValidHook(g_pointerHook)) { shDestroyHook(g_pointerHook); g_pointerHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_floatHook)) { shDestroyHook(g_floatHook); g_floatHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_midHook)) { shDestroyHook(g_midHook); g_midHook = SH_INVALID_HANDLE; }
+    if (shIsValidHook(g_entryContinueHook)) { shDestroyHook(g_entryContinueHook); g_entryContinueHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_xmmUsercallHook)) { shDestroyHook(g_xmmUsercallHook); g_xmmUsercallHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_nativeHook)) { shDestroyHook(g_nativeHook); g_nativeHook = SH_INVALID_HANDLE; }
     if (shIsValidHook(g_breakpointHook)) { shDestroyHook(g_breakpointHook); g_breakpointHook = SH_INVALID_HANDLE; }

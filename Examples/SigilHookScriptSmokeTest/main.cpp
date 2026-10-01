@@ -50,6 +50,7 @@ namespace {
 
 volatile LONG g_targetCalls = 0;
 volatile LONG g_midTargetCalls = 0;
+volatile LONG g_midContinueCalls = 0;
 volatile LONG g_conventionTargetCalls = 0;
 volatile LONG g_usercallTargetCalls = 0;
 volatile LONG g_pointerTargetCalls = 0;
@@ -97,6 +98,11 @@ NOINLINE float floatTarget(float value) {
 
 NOINLINE int SIGILHOOK_CALL midTarget(int value) {
     ++g_midTargetCalls;
+    return value + 7;
+}
+
+NOINLINE int SIGILHOOK_CALL midContextTarget(int value) {
+    ++g_midContinueCalls;
     return value + 7;
 }
 
@@ -390,6 +396,7 @@ int main() {
     CHECK(sigilhook_runtime_set_shared_u64("target", reinterpret_cast<uint64_t>(&target)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("floatTarget", reinterpret_cast<uint64_t>(&floatTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("midTarget", reinterpret_cast<uint64_t>(&midTarget)) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("midContextTarget", reinterpret_cast<uint64_t>(&midContextTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("cdeclTarget", reinterpret_cast<uint64_t>(&cdeclTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("stdcallTarget", reinterpret_cast<uint64_t>(&stdcallTarget)) == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_set_shared_u64("fastcallTarget", reinterpret_cast<uint64_t>(&fastcallTarget)) == SIGILHOOK_OK);
@@ -457,6 +464,8 @@ int main() {
     CHECK(sigilhook_runtime_get_shared_u64("pointerScriptCallbacks", &pointerScriptCallbacks) == SIGILHOOK_OK);
     CHECK(pointerScriptCallbacks == 1);
 
+    CHECK(midContextTarget(35) == 42);
+    CHECK(g_midContinueCalls == 1);
     CHECK(target(1) == 42);
     CHECK(g_targetCalls == 1);
     const float floatResult = floatTarget(1.5f);

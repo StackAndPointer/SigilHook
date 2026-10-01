@@ -140,8 +140,26 @@ uint64 shHookScript(uint64 target, const string &in callbackDeclaration, const s
     return hookDetour(target, callbackDeclaration, signature);
 }
 
-uint64 shHookMid(uint64 target, const string &in callbackDeclaration, const string &in signature) {
-    return hookDetour(target, callbackDeclaration, signature);
+// Standard entry continue hook: the callback body runs first, then the script
+// calls continueOriginal() on the SHCallContext or shContinueOriginal() in legacy callbacks.
+uint64 shHookEntryContinue(uint64 target, const string &in callbackDeclaration,
+                           const string &in signature, const string &in convention = "") {
+    return hookDetourConvention(target, callbackDeclaration, signature, convention);
+}
+
+uint8 shHookInstructionStatus(uint64 address, const string &in callbackDeclaration,
+                              const string &in signature,
+                              uint64 &out hook, uint64 &out trampoline,
+                              uint64 &out overwrittenBytes,
+                              const string &in convention = "") {
+    return hookInstruction(address, callbackDeclaration, signature, convention,
+                           hook, trampoline, overwrittenBytes);
+}
+
+// Deprecated compatibility alias for shHookEntryContinue().
+uint64 shHookMid(uint64 target, const string &in callbackDeclaration,
+                 const string &in signature, const string &in convention = "") {
+    return shHookEntryContinue(target, callbackDeclaration, signature, convention);
 }
 
 uint64 shHookConvention(uint64 target, const string &in callbackDeclaration,
@@ -207,10 +225,15 @@ bool shIsHooked(uint64 handle) {
     return isHooked(handle);
 }
 
-bool shResumeMid(uint64 handle) {
+bool shContinueOriginal(uint64 handle) {
     if (!shSetInstructionPointer(shTrampoline(handle))) return false;
     shSkipOriginal();
     return true;
+}
+
+// Deprecated compatibility alias for shContinueOriginal().
+bool shResumeMid(uint64 handle) {
+    return shContinueOriginal(handle);
 }
 
 uint8 shHookType(uint64 handle) {

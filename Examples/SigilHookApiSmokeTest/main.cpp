@@ -74,6 +74,21 @@ __declspec(noinline) int SIGILHOOK_CALL stackRedirectTarget(int a, int b, int c,
     return e + 100;
 }
 
+__declspec(noinline) int SIGILHOOK_CALL codeTarget(int value) {
+    volatile int result = value;
+    for (int index = 0; index < 19; ++index) result += (index & 1);
+    ++g_targetCalls;
+    return result + 3;
+}
+
+void SIGILHOOK_CALL codeCallback(sigilhook_call_frame* frame, void*) {
+    ++g_targetCalls;
+    frame->arguments[0] = 41;
+    *frame->return_value = 42;
+    *frame->return_value_overridden = 1;
+    *frame->call_original = 0;
+}
+
 void SIGILHOOK_CALL stackRedirectCallback(sigilhook_call_frame* frame, void*) {
     if (frame->argument_count != 5 || frame->arguments[4] != 5) ++g_badStackFrame;
     uint64_t instructionPointer = 0;
@@ -358,7 +373,7 @@ int testXmmRegisters() {
 }
 int testBasicJitDetour() {
     CHECK(sigilhook_api_version() >= 0x00020006);
-    CHECK(sigilhook_api_version() >= 0x00020009);
+    CHECK(sigilhook_api_version() >= 0x0002000A);
     sigilhook_jit_handle jit{};
     uint64_t callbackAddress = 0;
     CHECK(sigilhook_create_jit_callback(
@@ -808,9 +823,28 @@ int testRuntimeReloadContract() {
     return 0;
 }
 
+int testInstructionDetour() {
+    g_targetCalls = 0;
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    CHECK(sigilhook_create_jit_callback("int", "int", "cdecl", codeCallback, nullptr, &jit, &callbackAddress) == SIGILHOOK_OK);
+    sigilhook_handle hook{};
+    uint64_t trampoline = 0;
+    uint32_t overwritten = 0;
+    CHECK(sigilhook_create_code_detour(reinterpret_cast<uint64_t>(&codeTarget), callbackAddress, &hook, &trampoline, &overwritten) == SIGILHOOK_OK);
+    CHECK(trampoline != 0);
+    CHECK(overwritten >= 5);
+    CHECK(codeTarget(1) == 42);
+    CHECK(g_targetCalls == 1);
+    CHECK(sigilhook_destroy(hook) == SIGILHOOK_OK);
+    CHECK(sigilhook_destroy_jit_callback(jit) == SIGILHOOK_OK);
+    return 0;
+}
+
 int main() {
     sigilhook_set_log_callback(printLog, nullptr);
     CHECK(testBasicJitDetour() == 0);
+    CHECK(testInstructionDetour() == 0);
     CHECK(testXmmRegisters() == 0);
     CHECK(testStackArgumentRedirect() == 0);
     CHECK(testAssemblyHelpers() == 0);

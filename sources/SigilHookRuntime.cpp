@@ -656,6 +656,98 @@ void scriptJitCallback(sigilhook_call_frame* frame, void* userData) {
     finishScriptCallback();
 }
 
+struct SHCallContext {
+    sigilhook_call_frame* frame = nullptr;
+};
+
+SHCallContext* currentCallContext() {
+    if (g_currentFrame == nullptr) return nullptr;
+    thread_local SHCallContext context;
+    context.frame = g_currentFrame;
+    return &context;
+}
+
+asQWORD contextArg(SHCallContext* context, asBYTE index) {
+    if (context == nullptr || context->frame == nullptr || index >= context->frame->argument_count) return 0;
+    return context->frame->arguments[index];
+}
+
+void contextSetArg(SHCallContext* context, asBYTE index, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr || index >= context->frame->argument_count) return;
+    context->frame->arguments[index] = static_cast<uint64_t>(value);
+}
+
+asQWORD contextReg(SHCallContext* context, asBYTE reg) {
+    if (context == nullptr || context->frame == nullptr) return 0;
+    uint64_t value = 0;
+    sigilhook_call_frame_get_register(context->frame, static_cast<sigilhook_register>(reg), &value);
+    return value;
+}
+
+bool contextSetReg(SHCallContext* context, asBYTE reg, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr) return false;
+    return sigilhook_call_frame_set_register(
+               context->frame, static_cast<sigilhook_register>(reg),
+               static_cast<uint64_t>(value)) == SIGILHOOK_OK;
+}
+
+asQWORD contextXmm(SHCallContext* context, asBYTE reg, asBYTE lane) {
+    if (context == nullptr || context->frame == nullptr) return 0;
+    uint64_t value = 0;
+    sigilhook_call_frame_get_xmm(
+        context->frame, static_cast<uint8_t>(reg), static_cast<uint8_t>(lane), &value);
+    return value;
+}
+
+bool contextSetXmm(SHCallContext* context, asBYTE reg, asBYTE lane, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr) return false;
+    return sigilhook_call_frame_set_xmm(
+               context->frame, static_cast<uint8_t>(reg), static_cast<uint8_t>(lane),
+               static_cast<uint64_t>(value)) == SIGILHOOK_OK;
+}
+
+asQWORD contextReturn(SHCallContext* context) {
+    if (context == nullptr || context->frame == nullptr || context->frame->return_value == nullptr) return 0;
+    return *context->frame->return_value;
+}
+
+void contextSetReturn(SHCallContext* context, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr || context->frame->return_value == nullptr) return;
+    *context->frame->return_value = static_cast<uint64_t>(value);
+    if (context->frame->return_value_overridden != nullptr) {
+        *context->frame->return_value_overridden = 1;
+    }
+}
+
+asQWORD contextFlags(SHCallContext* context) {
+    if (context == nullptr || context->frame == nullptr) return 0;
+    uint64_t flags = 0;
+    sigilhook_call_frame_get_flags(context->frame, &flags);
+    return flags;
+}
+
+bool contextSetFlags(SHCallContext* context, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr) return false;
+    return sigilhook_call_frame_set_flags(
+               context->frame, static_cast<uint64_t>(value)) == SIGILHOOK_OK;
+}
+
+void contextContinue(SHCallContext* context) {
+    if (context != nullptr && context->frame != nullptr && context->frame->call_original != nullptr) {
+        *context->frame->call_original = 1;
+    }
+}
+
+void contextSkip(SHCallContext* context) {
+    if (context != nullptr && context->frame != nullptr && context->frame->call_original != nullptr) {
+        *context->frame->call_original = 0;
+    }
+}
+
+SHCallContext* scriptCurrentContext() {
+    return currentCallContext();
+}
+
 void scriptSetFollowCall(asQWORD handle, int enabled) {
     sigilhook_set_follow_call_on_target(sigilhook_handle{static_cast<uint64_t>(handle)}, enabled);
 }
@@ -1099,6 +1191,21 @@ asQWORD scriptDoubleBits(double value);
 double scriptBitsDouble(asQWORD bits);
 
 void registerScriptApi(asIScriptEngine* engine) {
+    engine->RegisterObjectType("SHCallContext", 0, asOBJ_REF | asOBJ_NOCOUNT);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getArg(uint8)", asFUNCTION(contextArg), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "void setArg(uint8, uint64)", asFUNCTION(contextSetArg), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getReg(uint8)", asFUNCTION(contextReg), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "bool setReg(uint8, uint64)", asFUNCTION(contextSetReg), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getXmm(uint8, uint8)", asFUNCTION(contextXmm), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "bool setXmm(uint8, uint8, uint64)", asFUNCTION(contextSetXmm), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getReturn()", asFUNCTION(contextReturn), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "void setReturn(uint64)", asFUNCTION(contextSetReturn), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getFlags()", asFUNCTION(contextFlags), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "bool setFlags(uint64)", asFUNCTION(contextSetFlags), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "void continueOriginal()", asFUNCTION(contextContinue), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "void skipOriginal()", asFUNCTION(contextSkip), asCALL_CDECL_OBJFIRST);
+
+    engine->RegisterGlobalFunction("SHCallContext@ currentContext()", asFUNCTION(scriptCurrentContext), asCALL_CDECL);
     RegisterStdString(engine);
     RegisterScriptArray(engine, true);
     engine->RegisterGlobalFunction("void setSharedU64(const string &in, uint64)", asFUNCTION(scriptSetSharedU64), asCALL_CDECL);
@@ -1272,11 +1379,62 @@ asQWORD scriptHookDetourConvention(
     return handle;
 }
 
+asBYTE scriptHookInstruction(
+    asQWORD address, const std::string& declaration,
+    const std::string& signature, const std::string& convention,
+    asQWORD& outHook, asQWORD& outTrampoline, asQWORD& outOverwrittenBytes) {
+    outHook = 0;
+    outTrampoline = 0;
+    outOverwrittenBytes = 0;
+
+    asIScriptFunction* callback = findScriptFunction(declaration);
+    if (callback == nullptr) {
+        writeLog("callback declaration not found: " + declaration);
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_NOT_FOUND);
+    }
+
+    const size_t separator = signature.find(':');
+    const std::string returnType = trim(separator == std::string::npos ? signature : signature.substr(0, separator));
+    const std::string parameters = separator == std::string::npos ? "" : signature.substr(separator + 1);
+    auto binding = std::make_unique<ScriptBinding>();
+    binding->declaration = declaration;
+    binding->callback = callback;
+    sigilhook_jit_handle jit{};
+    uint64_t callbackAddress = 0;
+    const sigilhook_status jitStatus = sigilhook_create_jit_callback(
+        returnType.empty() ? "void" : returnType.c_str(), parameters.c_str(), convention.c_str(),
+        scriptJitCallback, binding.get(), &jit, &callbackAddress);
+    if (jitStatus != SIGILHOOK_OK) return static_cast<asBYTE>(jitStatus);
+    binding->jit = jit;
+
+    sigilhook_handle hook{};
+    uint64_t trampoline = 0;
+    uint32_t overwritten = 0;
+    const sigilhook_status hookStatus = sigilhook_create_code_detour(
+        address, callbackAddress, &hook, &trampoline, &overwritten);
+    if (hookStatus != SIGILHOOK_OK) {
+        sigilhook_destroy_jit_callback(jit);
+        return static_cast<asBYTE>(hookStatus);
+    }
+    binding->hook = hook;
+    trackScriptHook(hook);
+    outHook = hook.value;
+    outTrampoline = trampoline;
+    outOverwrittenBytes = overwritten;
+
+    std::lock_guard bindingLock(g_runtime.bindingsMutex);
+    g_runtime.bindings.push_back(std::move(binding));
+    return static_cast<asBYTE>(SIGILHOOK_OK);
+}
+
 asQWORD scriptHookDetour(asQWORD target, const std::string& callbackDeclaration, const std::string& signature) {
     return scriptHookDetourConvention(target, callbackDeclaration, signature, "");
 }
 
 void registerScriptHookApi(asIScriptEngine* engine) {
+    engine->RegisterGlobalFunction("uint64 hookEntryContinue(uint64, const string &in, const string &in, const string &in)", asFUNCTION(scriptHookDetourConvention), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 hookInstruction(uint64, const string &in, const string &in, const string &in, uint64 &out, uint64 &out, uint64 &out)", asFUNCTION(scriptHookInstruction), asCALL_CDECL);
+
     engine->RegisterGlobalFunction("uint64 hookNative(uint64, uint64)", asFUNCTION(scriptHookNative), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hookDetour(uint64, const string &in, const string &in)", asFUNCTION(scriptHookDetour), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hookDetourConvention(uint64, const string &in, const string &in, const string &in)", asFUNCTION(scriptHookDetourConvention), asCALL_CDECL);
