@@ -100,18 +100,15 @@ DWORD WINAPI runtimeThread(LPVOID parameter) {
     const std::filesystem::path scriptDirectory =
         std::filesystem::path(std::wstring(path, length)).parent_path() / L"SigilHook";
     const sigilhook_status startStatus = sigilhook_runtime_start(scriptDirectory.c_str());
-    const sigilhook_status loadStatus =
-        startStatus == SIGILHOOK_OK ? sigilhook_runtime_load_directory(scriptDirectory.c_str()) : startStatus;
-    if (loadStatus != SIGILHOOK_OK) {
-        // A failed auto-load must not leave AngelScript or hooks behind while
-        // this bootstrap thread releases its extra module reference.
-        if (startStatus == SIGILHOOK_OK) {
-            sigilhook_runtime_stop();
-        }
-        if (g_runtimeModule != nullptr) FreeLibraryAndExitThread(g_runtimeModule, 1);
-        return 1;
-    }
+    // Start the request pipe before loading scripts. A syntax error on the
+    // initial load must not remove the only way to trigger a retry.
     startHotReloadPipe();
+    if (startStatus == SIGILHOOK_OK) {
+        // Keep the runtime alive even when the first load fails. The pipe
+        // thread provides the retry path, and a later successful reload will
+        // replace the failed application.
+        sigilhook_runtime_load_directory(scriptDirectory.c_str());
+    }
     if (g_runtimeModule != nullptr) FreeLibraryAndExitThread(g_runtimeModule, 0);
     return 0;
 }

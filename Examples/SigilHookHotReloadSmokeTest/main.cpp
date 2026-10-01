@@ -49,6 +49,14 @@ std::string mainSource(int generation) {
         "}\n";
 }
 
+std::string malformedMainSource() {
+    return
+        "#include \"SigilHook.ash\"\n"
+        "void main() {\n"
+        "    this is not valid AngelScript;\n"
+        "}\n";
+}
+
 } // namespace
 
 int main() {
@@ -89,17 +97,17 @@ int main() {
     CHECK(mainRuns == 3);
     CHECK(unloadRuns == 2);
 
-    // A failed compile must not leave a half-initialized runtime behind.
+    // A failed compile must leave the runtime available for a later retry.
     CHECK(writeFile(root / "main.as", "void main() { this is not valid AngelScript; }\n"));
     CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_SCRIPT);
-    CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_NOT_FOUND);
+    CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_SCRIPT);
     CHECK(writeFile(root / "main.as", mainSource(3)));
-    CHECK(sigilhook_runtime_load_directory(root.c_str()) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_reload() == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_get_shared_u64("generation", &generation) == SIGILHOOK_OK);
     CHECK(generation == 3);
 
-    // Loading the directory again starts a fresh application, so main() runs
-    // once more while the generation counter stays on the recovered value.
+    // main() runs once more after recovery while the generation counter stays
+    // on the recovered value.
     uint64_t finalMainRuns = 0;
     CHECK(sigilhook_runtime_get_shared_u64("mainRuns", &finalMainRuns) == SIGILHOOK_OK);
     CHECK(finalMainRuns == 4);

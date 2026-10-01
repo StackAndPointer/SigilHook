@@ -69,11 +69,45 @@ asIScriptFunction* findScriptFunction(const std::string& declaration);
 
 std::mutex g_logMutex;
 
+#if defined(_WIN32)
+std::wstring utf8ToWide(const std::string& value) {
+    if (value.empty()) return {};
+    const int size = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    if (size <= 0) return {};
+    std::wstring result(static_cast<size_t>(size), L'\0');
+    if (MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+            result.data(), size) != size) {
+        return {};
+    }
+    return result;
+}
+#endif
+
+std::string logText(const std::string& message) {
+#if defined(_WIN32)
+    const std::wstring wideMessage = utf8ToWide(message);
+    if (wideMessage.empty()) return message;
+    const int required = WideCharToMultiByte(
+        CP_ACP, 0, wideMessage.c_str(), static_cast<int>(wideMessage.size()),
+        nullptr, 0, nullptr, nullptr);
+    if (required <= 0) return message;
+    std::string encoded(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(
+        CP_ACP, 0, wideMessage.c_str(), static_cast<int>(wideMessage.size()),
+        encoded.data(), required, nullptr, nullptr);
+    return encoded;
+#else
+    return message;
+#endif
+}
+
 void writeLog(const std::string& message) {
     std::lock_guard lock(g_logMutex);
-    std::ofstream log(g_runtime.logPath, std::ios::app);
+    std::ofstream log(g_runtime.logPath, std::ios::app | std::ios::binary);
     if (log) {
-        log << message << '\n';
+        log << logText(message) << '\n';
     }
 }
 
@@ -1355,15 +1389,10 @@ sigilhook_status loadDirectory(const fs::path& directory) {
         const sigilhook_status status = startRuntime(directory);
         if (status != SIGILHOOK_OK) return status;
     }
-    const auto failLoad = [startedHere](sigilhook_status status) {
-        if (startedHere && g_runtime.modules.empty() && g_runtime.engine != nullptr) {
-            g_runtime.engine->ShutDownAndRelease();
-            g_runtime.engine = nullptr;
-            g_runtime.started = false;
-            g_runtime.scriptDirectory.clear();
-            g_runtime.logPath.clear();
-            sigilhook_set_log_callback(nullptr, nullptr);
-        }
+    // A failed load must leave the runtime retryable. Keep the engine and the
+    // script directory alive so a later reload can recover from a syntax error
+    // without requiring the host to be restarted.
+    const auto failLoad = [](sigilhook_status status) {
         return status;
     };
     std::lock_guard lock(g_runtime.mutex);
@@ -1552,8 +1581,8 @@ sigilhook_status reloadRuntime(uint32_t timeoutMs) {
     fs::path directory;
     {
         std::lock_guard lock(g_runtime.mutex);
-        if (!g_runtime.started || g_runtime.modules.empty()) {
-            writeLog("runtime reload skipped: no script application is loaded");
+        if (!g_runtime.started) {
+            writeLog("runtime reload skipped: the runtime has not been started");
             return SIGILHOOK_ERROR_NOT_FOUND;
         }
         directory = g_runtime.scriptDirectory;
@@ -1578,12 +1607,11 @@ sigilhook_status reloadRuntime(uint32_t timeoutMs) {
     const sigilhook_status loadStatus = loadDirectory(directory);
     if (loadStatus != SIGILHOOK_OK) {
         writeLog("runtime reload failed: load returned " + std::to_string(static_cast<int>(loadStatus)));
-        // Keep the public runtime state consistent: a failed load leaves no
-        // application behind, so tear the freshly started engine back down.
-        const sigilhook_status cleanupStatus = stopRuntime(timeoutMs);
-        if (cleanupStatus != SIGILHOOK_OK) {
-            writeLog("runtime reload cleanup failed: stop returned " +
-                std::to_string(static_cast<int>(cleanupStatus)));
+        // Keep the freshly started engine and the known script directory alive.
+        // This preserves the retry path after a syntax error instead of forcing
+        // the host to re-inject the DLL.
+        if (!g_runtime.started) {
+            writeLog("runtime reload failed: the runtime did not remain available for retry");
         }
         return loadStatus;
     }

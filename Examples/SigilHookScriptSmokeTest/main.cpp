@@ -16,6 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <sstream>
 
 #define CHECK(expression) do { if (!(expression)) { std::cerr << "check failed: " #expression " at line " << __LINE__ << '\n'; char error[1024] = {}; sigilhook_get_last_error(error, sizeof(error)); std::cerr << error << '\n'; sigilhook_runtime_stop(); return __LINE__; } } while (false)
 
@@ -516,6 +517,17 @@ int main() {
         if (runtimeLog) std::cerr << runtimeLog.rdbuf() << std::endl;
     }
     CHECK(g_conventionTargetCalls == 0);
+
+    {
+        std::ifstream runtimeLog(scriptDirectory / "logs" / "SigilHook.log", std::ios::binary);
+        std::ostringstream logContents;
+        logContents << runtimeLog.rdbuf();
+        const std::string logText = logContents.str();
+        const std::string utf8Chinese = "\xE4\xB8\xAD\xE6\x96\x87\xE6\x97\xA5\xE5\xBF\x97\xE6\xB5\x8B\xE8\xAF\x95";
+        const std::string ansiChinese = "\xD6\xD0\xCE\xC4\xC8\xD5\xD6\xBE\xB2\xE2\xCA\xD4";
+        CHECK(logText.find(utf8Chinese) != std::string::npos ||
+              logText.find(ansiChinese) != std::string::npos);
+    }
 
     const auto invoke = reinterpret_cast<UsercallCaller>(usercallCaller);
     CHECK(sigilhook_runtime_set_shared_u64("usercallMode", 0) == SIGILHOOK_OK);

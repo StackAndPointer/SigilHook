@@ -46,6 +46,7 @@ void verifyHelperApi() {
     shClearLastError();
     shLastError();
     shLog("SigilHook standard helper smoke test");
+    shLog("中文日志测试");
     shSetSharedU64("helperLoopback", 0x123456789abcdef0);
     if (shSharedU64("helperLoopback") != 0x123456789abcdef0) { failHelperTest(); return; }
 
