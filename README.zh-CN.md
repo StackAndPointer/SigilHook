@@ -14,7 +14,7 @@ SigilHook 是一个基于 PolyHook 2、由 AngelScript 驱动的 x86/x64 Hook �
 - SigilHook 能产出真正可注入的交付物。构建会生成 `SigilHook.dll`，带最小化的 `DllMain` 和独立初始化线程，AngelScript 初始化不会在 Windows loader lock 中执行。
 - 运行时回调桥基于 AsmJit 重写。原来的 `ILCallback` 只适合简单回调，存在回调内存生命周期、错误处理和线程安全缺口，不能直接安全地暴露给脚本。替换后的 JIT 回调支持读写参数、返回值、通用寄存器和 flags。
 - 增加了调用约定层：`cdecl`、`stdcall`、`fastcall`、`thiscall`、`vectorcall`，以及自定义 `usercall` 映射（`argN=<register|stack+offset>`、`ret=<register>`、`x86 cleanup=<bytes>`）。这些由 AsmJit 生成的汇编桩实现，x86 和 x64 共用同一套描述语法。
-- 增加了 mid-hook 语义：`shHookMid` 配合 `shResumeMid`，把指令指针重定向到 trampoline，让代码在原函数体执行前插入，然后继续进入原函数体。
+- 增加了三层 Hook 语义：`shHookEntryContinue` 是入口 continue detour，`shContinueOriginal` 继续原函数体，`shHookInstructionStatus` 是真正的指令级 hook，`SHCallContext` 提供回调上下文对象。`shHookMid` / `shResumeMid` 保留为兼容别名。
 - 增加了脚本级通用寄存器、XMM 寄存器和 flags 的读写，包括低 8/16/32 位的部分写入，例如 `shReg16`、`shSetReg16`。`SP` 保持只读，避免破坏回调返回路径。
 - 增加了内存读写、内存保护修改、特征码扫描、Zydis 反汇编、CMP/TEST 标志计算、FXSAVE/FXRSTOR、可执行返回片段和栈指针跳转片段等辅助接口。
 - 增加了热重载：每个进程一个命名管道，`\\.\pipe\SigilHook.<pid>`，配套 `SigilHookReload.bat`。可以按进程或对所有存活宿主触发热重载，不需要重新注入。
@@ -95,7 +95,7 @@ SigilHookReload.bat <pid>      rem 只重载指定进程 id 的宿主
 - detour 创建，以及 `cdecl`、`stdcall`、`fastcall`、`thiscall`、`vectorcall` 和 `usercall` 脚本 Hook
 - 软件断点、硬件断点、IAT、EAT、VFunc、VTable Hook
 - 安装、移除、rehook、销毁、状态查询、trampoline、debug、follow-call、最大深度和 x64 detour scheme 控制
-- 参数、寄存器、XMM、flag、返回值、原函数调用、mid-hook 和提前返回控制
+- 参数、寄存器、XMM、flag、返回值、原函数调用、入口继续、指令级 Hook 和提前返回控制
 - 8/16/32/64 位参数、寄存器、返回值和标量内存访问辅助函数
 - 回调指令指针检查和控流重定向
 - Zydis 反汇编、十六进制解析、CMP/TEST 标志辅助、FXSAVE/FXRSTOR、返回片段和栈指针跳转片段
@@ -111,10 +111,10 @@ SigilHookReload.bat <pid>      rem 只重载指定进程 id 的宿主
 | 分组 | 函数 |
 | --- | --- |
 | 运行时和状态 | `shIsValidHook`、`shApiVersion`、`shBuildMode`、`shIsX86`、`shIsX64`、`shPointerSize`、`shClearLastError`、`shLastError`、`shLog`、`shStatusString` |
-| Hook 创建 | `shHookScript`、`shHookMid`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
-| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shResumeMid` |
+| Hook 创建 | `shHookScript`、`shHookEntryContinue`、`shHookInstructionStatus`、`shHookMid`（兼容别名）、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
+| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shContinueOriginal`、`shResumeMid`（兼容别名） |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
-| 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
+| 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal`、`currentContext`、`SHCallContext::getArg`、`SHCallContext::setArg`、`SHCallContext::getReg`、`SHCallContext::setReg`、`SHCallContext::getXmm`、`SHCallContext::setXmm`、`SHCallContext::getReturn`、`SHCallContext::setReturn`、`SHCallContext::getFlags`、`SHCallContext::setFlags`、`SHCallContext::continueOriginal`、`SHCallContext::skipOriginal` |
 | 寄存器和控流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
 | 内存和扫描 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编和反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
@@ -204,14 +204,33 @@ python tools\header_to_ash.py include\GameApi.h `
 
 生成的包装会缓存 DLL 和导出查找，显式序列化记录字段，并通过 AngelScript 异常传递原生失败。运行时可以使用 `shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes` 和 `shBufferAddress` 做更低层集成。原生模块管理器会校验 PE 架构、缓存导出、对句柄引用计数，并在 `sigilhook_modules_shutdown()` 中按逆序卸载模块。
 
-## Mid-hook 和浮点回调
+## 入口继续和指令级 Hook
 
-`shHookMid` 创建普通 detour；在它的回调里，`shResumeMid(handle)` 会把指令指针重定向到 trampoline，跳过原函数入口。这适合在原函数体执行前插入代码：
+`shHookEntryContinue` 是入口 detour 的明确命名；`shHookMid` 和 `shResumeMid` 保留为兼容别名。`shHookEntryContinue` 适合在原函数入口前插入代码，然后通过 trampoline 继续原函数体：
 
 ```angelscript
 void beforeUpdate() {
     // 检查或修改状态
-    shResumeMid(g_midHook);
+    shContinueOriginal(g_entryHook);
+}
+```
+
+`shHookInstructionStatus` 是真正的指令级 Hook。它先校验目标地址落在指令边界，再把被覆盖指令搬进 trampoline；覆盖范围内出现相对控制流或 `ret` 时直接失败并写日志，不做猜测：
+
+```angelscript
+uint64 hook = 0;
+uint64 trampoline = 0;
+uint64 overwritten = 0;
+uint8 status = shHookInstructionStatus(0x415D40, "void onInstruction()", "void");
+```
+
+回调可以用 `SHCallContext` 对象替代线程局部的全局辅助函数：
+
+```angelscript
+void onTarget(SHCallContext@ ctx) {
+    uint64 value = ctx.getArg(0);
+    ctx.setReturn(value + 1);
+    ctx.continueOriginal();
 }
 ```
 
@@ -229,7 +248,7 @@ AngelScript 回调可以用 `shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat
 - Zydis 反汇编、CMP/TEST flags、FXSAVE/FXRSTOR、可执行片段，以及回调指令指针重定向
 - 脚本运行时启动、脚本加载、入口调用和停止
 
-当前 API 版本是 `0x00020009`。所有地址都以 `uint64_t` 跨 ABI 传递。Hook 构造返回状态码，不把 C++ 异常抛出边界。
+当前 API 版本是 `0x0002000A`。所有地址都以 `uint64_t` 跨 ABI 传递。Hook 构造返回状态码，不把 C++ 异常抛出边界。
 
 ## 构建
 

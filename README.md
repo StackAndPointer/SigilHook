@@ -16,7 +16,7 @@ This section summarizes the deliberate additions on top of the two upstream proj
 - SigilHook produces a real injectable deliverable. The build emits `SigilHook.dll` with a minimal `DllMain` and a separate initialization thread, so AngelScript initialization does not run under the Windows loader lock.
 - The runtime callback bridge was rewritten around AsmJit. The original `ILCallback` only suited simple callbacks and had callback-memory lifetime, error-handling, and thread-safety gaps that made it unsafe to expose directly to scripts. The replacement JIT callback supports reading and writing arguments, return values, general-purpose registers, and flags.
 - A calling-convention layer was added: `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, and custom `usercall` mappings (`argN=<register|stack+offset>`, `ret=<register>`, `x86 cleanup=<bytes>`). These are implemented by AsmJit-generated stubs, with one description grammar shared by x86 and x64.
-- Mid-hook semantics were added: `shHookMid` plus `shResumeMid` redirect the instruction pointer to the trampoline, allowing code to run immediately before the original function body and then continue into it.
+- Entry-continue and instruction-level hooking were added: `shHookEntryContinue` with `shContinueOriginal` continues through the trampoline, `shHookInstructionStatus` installs a real mid-instruction detour, and `SHCallContext` exposes a per-callback object instead of thread-local helpers. `shHookMid`/`shResumeMid` remain as compatibility aliases.
 - Script-level read/write access was added for general-purpose registers, XMM registers, and flags, including partial 8/16/32-bit writes such as `shReg16` and `shSetReg16`. `SP` is read-only so the callback return path stays intact.
 - Helper surfaces were added for memory reads and writes, memory protection changes, pattern scanning, Zydis disassembly, CMP/TEST flag computation, FXSAVE/FXRSTOR, executable return snippets, and stack-pointer jump snippets.
 - Hot reload was added over a per-process named pipe, `\\.\pipe\SigilHook.<pid>`, together with `SigilHookReload.bat`. Scripts can be reloaded by process or across all live hosts without re-injection.
@@ -35,7 +35,6 @@ This section summarizes the deliberate additions on top of the two upstream proj
 - AngelScript's own source is not substantially modified. The changes are build integration and surrounding runtime integration; the bindings and runtime code are SigilHook additions.
 
 ## Documentation
-
 - [English README](README.md)
 - [中文 README](README.zh-CN.md)
 - [English usage guide](docs/USAGE.md)
@@ -119,7 +118,8 @@ and status-returning functions that preserve the underlying C ABI result:
 - software breakpoint, hardware breakpoint, IAT, EAT, VFunc, and VTable hooks
 - install, remove, rehook, destroy, state query, trampoline, debug, follow-call,
   maximum-depth, and x64 detour-scheme controls
-- argument, register, XMM, flag, return, original-call, mid-hook, and early-return controls
+- argument, register, XMM, flag, return, original-call, entry-continue,
+  instruction-hook, and early-return controls
 - 8/16/32/64-bit argument, register, return, and scalar-memory access helpers
 - callback instruction-pointer inspection and control-flow redirection
 - Zydis disassembly, hexadecimal parsing, CMP/TEST flag helpers, FXSAVE/FXRSTOR,
@@ -145,11 +145,9 @@ The complete interface is grouped as follows:
 | Group | Functions |
 | --- | --- |
 | Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
-| Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
-| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shResumeMid` |
-| Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
-| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Hook creation | `shHookScript`, `shHookEntryContinue`, `shHookInstructionStatus`, `shHookMid` (deprecated alias), `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shContinueOriginal`, `shResumeMid` (deprecated alias) |
+| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal`, `currentContext`, `SHCallContext::getArg`, `SHCallContext::setArg`, `SHCallContext::getReg`, `SHCallContext::setReg`, `SHCallContext::getXmm`, `SHCallContext::setXmm`, `SHCallContext::getReturn`, `SHCallContext::setReturn`, `SHCallContext::getFlags`, `SHCallContext::setFlags`, `SHCallContext::continueOriginal`, `SHCallContext::skipOriginal` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
@@ -269,18 +267,38 @@ Use `--check` in CI to verify that an existing generated file is current. The co
 
 Generated wrappers cache DLL and export lookup, serialize record fields explicitly, and propagate native failures through AngelScript exceptions. At runtime use `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, and `shBufferAddress` for lower-level integration. The native module manager validates PE architecture, caches exports, reference-counts handles, and unloads modules in reverse order during `sigilhook_modules_shutdown()`.
 
-## Mid-hook and floating-point callbacks
+## Entry-continue, instruction hooks, and floating-point callbacks
 
-`shHookMid` creates a normal detour; inside its callback, `shResumeMid(handle)` redirects the instruction pointer to the trampoline and skips the original entry. This provides a convenient place for code that runs immediately before the original function body:
+`shHookEntryContinue` is the clear name for an entry detour that continues through the trampoline. `shHookMid` and `shResumeMid` remain as compatibility aliases for existing scripts.
+
+Use `shHookEntryContinue` when a hook should run before the original entry and then continue through the trampoline:
 
 ```angelscript
 void beforeUpdate() {
     // inspect or modify state
-    shResumeMid(g_midHook);
+    shContinueOriginal(g_entryHook);
 }
 ```
 
-AngelScript callbacks can read and write XMM registers with `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, and `shSetXmmDouble`; use `shFloatBits`/`shBitsFloat` and `shDoubleBits`/`shBitsDouble` to convert between floating-point values and their integer representations. XMM0-7 are available on x86 and XMM0-15 on x64; lane 0 is the low 64 bits and lane 1 is the high 64 bits. Float and double helpers use lane 0. x64 floating-point arguments are synchronized through XMM; x86 standard floating-point arguments use `shSetArg` because they are passed on the stack.
+Use `shHookInstructionStatus` for a real instruction-level hook. It verifies an instruction boundary, moves the overwritten instructions into a trampoline, and rejects relative control flow or `ret` in the overwritten range instead of guessing:
+
+```angelscript
+uint64 hook = 0;
+uint64 trampoline = 0;
+uint64 overwritten = 0;
+uint8 status = shHookInstructionStatus(0x415D40, "void onInstruction()", "void");
+```
+
+Callbacks can use the `SHCallContext` object instead of the thread-local helper functions:
+
+```angelscript
+void onTarget(SHCallContext@ ctx) {
+    uint64 value = ctx.getArg(0);
+    ctx.setReturn(value + 1);
+    ctx.continueOriginal();
+}
+```
+
 
 ## C ABI
 
@@ -296,9 +314,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
   and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x00020009`. All addresses cross the ABI as `uint64_t`.
-Hook construction returns status codes instead of throwing C++ exceptions across
-the boundary.
+The current API version is `0x0002000A`. All addresses cross the ABI as `uint64_t`.
 
 ## Building
 

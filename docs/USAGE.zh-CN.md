@@ -208,7 +208,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-当前 C API 版本是 `0x00020009`。
+当前 C API 版本是 `0x0002000A`。
 
 `sigilhook_invoke_usercall` 会按目标地址和签名缓存生成的调用桩。运行时停止时会自动清理该缓存；如果原生宿主持续使用 C ABI 而不停止运行时，应在这些目标不再使用时显式调用
 `sigilhook_clear_invoker_cache()`。
@@ -237,8 +237,8 @@ SH_ERROR_EXCEPTION
 | 分组 | 函数 |
 | --- | --- |
 | 运行时与状态 | `shIsValidHook`、`shApiVersion`、`shBuildMode`、`shIsX86`、`shIsX64`、`shPointerSize`、`shRegisterAvailable`、`shRegisterWritable`、`shClearLastError`、`shLastError`、`shLog`、`shStatusString` |
-| Hook 创建 | `shHookScript`、`shHookMid`、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
-| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shResumeMid` |
+| Hook 创建 | `shHookScript`、`shHookEntryContinue`、`shHookInstructionStatus`、`shHookMid`（兼容别名）、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
+| Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shContinueOriginal`、`shResumeMid`（兼容别名） |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
 | 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
 | 寄存器与控制流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
@@ -530,16 +530,36 @@ python tools\header_to_ash.py include\GameApi.h `
 
 模板、类方法、mangled C++ 名称、非 POD 记录、虚函数、可变参数、union、位域和未知 `#pragma pack` 布局会以文件/行/列诊断拒绝。生成的包装函数缓存 DLL 和导出查找、显式序列化结构体字段，并通过 AngelScript 异常传播原生调用失败。底层运行时接口包括 `shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes` 和 `shBufferAddress`。
 
-## Mid-hook 便捷接口
+## 入口继续和指令级 Hook
 
-`shHookMid()` 创建普通 detour；在回调中调用 `shResumeMid(handle)` 会把指令指针重定向到 trampoline 并跳过原函数入口，从而在原函数体执行前插入代码：
+`shHookEntryContinue()` 是入口 detour 的明确命名；`shHookMid()` 和 `shResumeMid()` 保留为兼容别名。`shHookEntryContinue()` 在原函数入口前执行，然后通过 trampoline 继续原函数体：
 
 ```angelscript
 void beforeTarget() {
     // 检查或修改状态
-    shResumeMid(g_midHook);
+    shContinueOriginal(g_entryHook);
 }
 ```
+
+`shHookInstructionStatus()` 是真正的指令级 Hook。它先校验目标地址落在指令边界，再把被覆盖指令搬进 trampoline；覆盖范围内出现相对控制流或 `ret` 时直接失败并写日志，不做猜测：
+
+```angelscript
+uint64 hook = 0;
+uint64 trampoline = 0;
+uint64 overwritten = 0;
+uint8 status = shHookInstructionStatus(0x415D40, "void onInstruction()", "void");
+```
+
+回调可以用 `SHCallContext` 对象替代线程局部的全局辅助函数：
+
+```angelscript
+void onTarget(SHCallContext@ ctx) {
+    uint64 value = ctx.getArg(0);
+    ctx.setReturn(value + 1);
+    ctx.continueOriginal();
+}
+```
+
 ## 12. C ABI 与高级集成
 
 原生宿主使用 [`include/sigilhook.h`](../include/sigilhook.h)。所有地址都以 `uint64_t` 传递，句柄是不透明的 `sigilhook_handle`，边界上不暴露 C++ 异常、STL 类型或编译器对象布局。

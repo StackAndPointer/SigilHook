@@ -221,7 +221,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-The current C API version is `0x00020009`.
+The current C API version is `0x0002000A`.
 
 `sigilhook_invoke_usercall` caches generated invoker stubs by target and
 signature. Runtime shutdown clears that cache. A native host that uses the C
@@ -252,8 +252,8 @@ The standard header is the public script API. Its functions are grouped below:
 | Group | Functions |
 | --- | --- |
 | Runtime and status | `shIsValidHook`, `shApiVersion`, `shBuildMode`, `shIsX86`, `shIsX64`, `shPointerSize`, `shClearLastError`, `shLastError`, `shLog`, `shStatusString` |
-| Hook creation | `shHookScript`, `shHookMid`, `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
-| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shResumeMid` |
+| Hook creation | `shHookScript`, `shHookEntryContinue`, `shHookInstructionStatus`, `shHookMid` (deprecated alias), `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
+| Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shContinueOriginal`, `shResumeMid` (deprecated alias) |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
 | Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
@@ -546,16 +546,36 @@ The converter uses only the Python standard library and supports local includes,
 
 Templates, class methods, mangled C++ names, non-POD records, virtual functions, variadic calls, unions, bit-fields, and unknown `#pragma pack` layouts are rejected with file/line/column diagnostics. Generated wrappers cache DLL/export lookup, serialize record fields explicitly, and raise AngelScript exceptions when native invocation fails. `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, and `shBufferAddress` expose the lower-level runtime operations.
 
-## Mid-hook convenience API
+## Entry-continue and instruction hooks
 
-`shHookMid()` creates a normal detour. Inside its callback, call `shResumeMid(handle)` to redirect the instruction pointer to the trampoline and skip the original entry, allowing code to run immediately before the original function body:
+`shHookEntryContinue()` is the clear name for an entry detour that continues through the trampoline; `shHookMid()` and `shResumeMid()` remain as compatibility aliases. `shHookEntryContinue()` runs before the original entry and then continues through the trampoline:
 
 ```angelscript
 void beforeTarget() {
     // inspect or update state
-    shResumeMid(g_midHook);
+    shContinueOriginal(g_entryHook);
 }
 ```
+
+`shHookInstructionStatus()` is the real instruction-level hook. It verifies the address is an instruction boundary, relocates the overwritten instructions into a trampoline, and fails with a log message when the overwritten range contains relative control flow or `ret`:
+
+```angelscript
+uint64 hook = 0;
+uint64 trampoline = 0;
+uint64 overwritten = 0;
+uint8 status = shHookInstructionStatus(0x415D40, "void onInstruction()", "void");
+```
+
+Callbacks may use the `SHCallContext` object instead of the thread-local helper functions:
+
+```angelscript
+void onTarget(SHCallContext@ ctx) {
+    uint64 value = ctx.getArg(0);
+    ctx.setReturn(value + 1);
+    ctx.continueOriginal();
+}
+```
+
 ## 12. C ABI and advanced integration
 
 Native hosts use [`include/sigilhook.h`](../include/sigilhook.h). All addresses cross the ABI as `uint64_t`; handles are opaque `sigilhook_handle` values; no C++ exception, STL type, or compiler-specific object layout crosses the boundary.
