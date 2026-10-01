@@ -181,6 +181,11 @@ SIGILHOOK_API void SIGILHOOK_CALL sigilhook_set_log_callback(
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
     // out_trampoline is zero until installation; query sigilhook_get_trampoline after hooking.
     uint64_t target, uint64_t callback, sigilhook_handle* out_hook, uint64_t* out_trampoline);
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_create_code_detour(
+    // Creates a detour at an instruction boundary. The generated trampoline
+    // executes the overwritten instructions and resumes at the next instruction.
+    uint64_t address, uint64_t callback, sigilhook_handle* out_hook,
+    uint64_t* out_trampoline, uint32_t* out_overwritten_bytes);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle hook);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_hook(sigilhook_handle hook);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_unhook(sigilhook_handle hook);

@@ -5,6 +5,7 @@
 
 #include "sigilhook/ErrorLog.hpp"
 #include "sigilhook/Detour/ILCallback.hpp"
+#include "sigilhook/Detour/CodeDetour.hpp"
 #include "sigilhook/ZydisDisassembler.hpp"
 #include "sigilhook/Detour/x64Detour.hpp"
 #include "sigilhook/Detour/x86Detour.hpp"
@@ -460,7 +461,7 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x00020009;
+    return 0x0002000A;
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -602,6 +603,43 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
     if (status == SIGILHOOK_OK && outTrampoline != nullptr) {
         const auto record = findHook(*outHook);
         if (record != nullptr) *outTrampoline = record->trampoline;
+    }
+    return status;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_create_code_detour(
+    uint64_t address, uint64_t callback, sigilhook_handle* outHook,
+    uint64_t* outTrampoline, uint32_t* outOverwrittenBytes) {
+    if (address == 0 || callback == 0 || outHook == nullptr) {
+        return fail(SIGILHOOK_ERROR_INVALID_ARGUMENT, "Address, callback, and output handle are required");
+    }
+    if (outTrampoline != nullptr) *outTrampoline = 0;
+    if (outOverwrittenBytes != nullptr) *outOverwrittenBytes = 0;
+
+    sigilhook_status status = SIGILHOOK_ERROR_HOOK_FAILED;
+    {
+        auto record = std::make_shared<HookRecord>();
+        record->type = SIGILHOOK_HOOK_DETOUR;
+        record->target = address;
+#if defined(SIGILHOOK_ARCH_X64)
+        auto hook = std::make_unique<SIGILHOOK::CodeDetour>(
+            address, callback, &record->trampoline, SIGILHOOK::Mode::x64);
+#else
+        auto hook = std::make_unique<SIGILHOOK::CodeDetour>(
+            address, callback, &record->trampoline, SIGILHOOK::Mode::x86);
+#endif
+        if (!hook->hook()) {
+            return fail(SIGILHOOK_ERROR_HOOK_FAILED, "Failed to install the instruction-level detour");
+        }
+        const uint32_t overwritten = hook->getOverwrittenBytes();
+        record->hook = std::move(hook);
+        const uint64_t key = g_nextKey++;
+        *outHook = handleFrom(reinterpret_cast<void*>(static_cast<uintptr_t>(key)));
+        if (outTrampoline != nullptr) *outTrampoline = record->trampoline;
+        if (outOverwrittenBytes != nullptr) *outOverwrittenBytes = overwritten;
+        std::lock_guard lock(g_registryMutex);
+        g_hooks.emplace(key, std::move(record));
+        status = SIGILHOOK_OK;
     }
     return status;
 }

@@ -283,6 +283,8 @@ else()
     target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/zydis>)
 endif()
 
+target_sources(${PROJECT_NAME} PRIVATE "${PROJECT_SOURCE_DIR}/sources/CodeDetour.cpp")
+install(FILES ${PROJECT_SOURCE_DIR}/sigilhook/Detour/CodeDetour.hpp DESTINATION include/sigilhook/Detour)
 target_sources(${PROJECT_NAME} PRIVATE "${PROJECT_SOURCE_DIR}/sources/ZydisDisassembler.cpp")
 install(FILES ${PROJECT_SOURCE_DIR}/sigilhook/ZydisDisassembler.hpp DESTINATION include/sigilhook)
 
