@@ -533,9 +533,7 @@ int main() {
         logContents << runtimeLog.rdbuf();
         const std::string logText = logContents.str();
         const std::string utf8Chinese = "\xE4\xB8\xAD\xE6\x96\x87\xE6\x97\xA5\xE5\xBF\x97\xE6\xB5\x8B\xE8\xAF\x95";
-        const std::string ansiChinese = "\xD6\xD0\xCE\xC4\xC8\xD5\xD6\xBE\xB2\xE2\xCA\xD4";
-        CHECK(logText.find(utf8Chinese) != std::string::npos ||
-              logText.find(ansiChinese) != std::string::npos);
+        CHECK(logText.find(utf8Chinese) != std::string::npos);
     }
 
     const auto invoke = reinterpret_cast<UsercallCaller>(usercallCaller);

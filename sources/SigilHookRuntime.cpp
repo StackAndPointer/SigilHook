@@ -69,45 +69,11 @@ asIScriptFunction* findScriptFunction(const std::string& declaration);
 
 std::mutex g_logMutex;
 
-#if defined(_WIN32)
-std::wstring utf8ToWide(const std::string& value) {
-    if (value.empty()) return {};
-    const int size = MultiByteToWideChar(
-        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
-    if (size <= 0) return {};
-    std::wstring result(static_cast<size_t>(size), L'\0');
-    if (MultiByteToWideChar(
-            CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
-            result.data(), size) != size) {
-        return {};
-    }
-    return result;
-}
-#endif
-
-std::string logText(const std::string& message) {
-#if defined(_WIN32)
-    const std::wstring wideMessage = utf8ToWide(message);
-    if (wideMessage.empty()) return message;
-    const int required = WideCharToMultiByte(
-        CP_ACP, 0, wideMessage.c_str(), static_cast<int>(wideMessage.size()),
-        nullptr, 0, nullptr, nullptr);
-    if (required <= 0) return message;
-    std::string encoded(static_cast<size_t>(required), '\0');
-    WideCharToMultiByte(
-        CP_ACP, 0, wideMessage.c_str(), static_cast<int>(wideMessage.size()),
-        encoded.data(), required, nullptr, nullptr);
-    return encoded;
-#else
-    return message;
-#endif
-}
-
 void writeLog(const std::string& message) {
     std::lock_guard lock(g_logMutex);
     std::ofstream log(g_runtime.logPath, std::ios::app | std::ios::binary);
     if (log) {
-        log << logText(message) << '\n';
+        log << message << '\n';
     }
 }
 

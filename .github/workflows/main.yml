@@ -188,7 +188,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: ${{ always() && inputs.release_tag != '' }}
+    if: ${{ success() && inputs.release_tag != '' }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
