@@ -109,6 +109,14 @@ namespace SIGILHOOK {
 			const std::string& callConv);
 
 		uint64_t* getTrampolineHolder();
+
+		// Trampoline entry/exit reference callbacks. The generated stubs call
+		// these around the original/trampoline invocation so the native registry
+		// can defer freeing a trampoline while a thread is still executing inside
+		// it. Setting them is optional; invoker-only callbacks never touch them.
+		typedef void(*tTrampolineRefCallback)(void* userData);
+		void setTrampolineRefCallbacks(
+			tTrampolineRefCallback onEnter, tTrampolineRefCallback onExit, void* userData);
 		uint8_t getTypeWidth(
 			const std::string& type,
 			asmjit::Arch arch = asmjit::Arch::kHost) const;
@@ -141,6 +149,9 @@ namespace SIGILHOOK {
 		uint64_t m_callbackBuf;
 		asmjit::x86::Mem argsStack;
 		uint64_t m_trampolinePtr;
+		tTrampolineRefCallback m_trampolineEnter = nullptr;
+		tTrampolineRefCallback m_trampolineExit = nullptr;
+		void* m_trampolineRefUserData = nullptr;
 		CallLayout m_callLayout;
 		std::string m_lastError;
 		sigilhook_status m_lastErrorStatus = SIGILHOOK_ERROR_SCRIPT;

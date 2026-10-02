@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "sigilhook/Detour/CodeDetour.hpp"
 
@@ -147,10 +147,10 @@ bool CodeDetour::unHook() {
     MemoryProtector prot(m_fnAddress, m_hookSize, ProtFlag::RWX, *this);
     ZydisDisassembler::writeEncoding(m_originalInsts, *this);
 
-    if (m_trampoline != 0) {
-        delete[] reinterpret_cast<unsigned char*>(m_trampoline);
-        m_trampoline = 0;
-        m_trampolineSz = 0;
+    // Retire instead of freeing: a target thread may still be executing in the
+    // trampoline. The native registry owns reclamation.
+    if (m_userTrampVar != nullptr) {
+        *m_userTrampVar = m_trampoline;
     }
     m_hooked = false;
     return true;

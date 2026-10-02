@@ -821,11 +821,25 @@ uint64_t SIGILHOOK::ILCallback::getJitFunc(
 	cc.cmp(asmjit::x86::byte_ptr(retStruct, offsetof(ReturnValue, m_callOriginal)), 0);
 	cc.je(skipOriginal);
 
+	if (m_trampolineEnter != nullptr) {
+		asmjit::InvokeNode* enterNode = nullptr;
+		cc.invoke(&enterNode, reinterpret_cast<uintptr_t>(m_trampolineEnter),
+			asmjit::FuncSignature::build<void, void*>());
+		enterNode->setArg(0, asmjit::Imm(reinterpret_cast<uintptr_t>(m_trampolineRefUserData)));
+	}
 	restoreFlags();
 	asmjit::InvokeNode* originalInvokeNode = nullptr;
 	cc.invoke(&originalInvokeNode, originalPointer, sig);
 	for (uint8_t argIndex = 0; argIndex < sig.argCount(); ++argIndex) {
 		originalInvokeNode->setArg(argIndex, argRegisters[argIndex]);
+	}
+	cc.lea(argStruct, argsStack);
+	cc.lea(retStruct, retStack);
+	if (m_trampolineExit != nullptr) {
+		asmjit::InvokeNode* exitNode = nullptr;
+		cc.invoke(&exitNode, reinterpret_cast<uintptr_t>(m_trampolineExit),
+			asmjit::FuncSignature::build<void, void*>());
+		exitNode->setArg(0, asmjit::Imm(reinterpret_cast<uintptr_t>(m_trampolineRefUserData)));
 	}
 	cc.lea(argStruct, argsStack);
 	cc.lea(retStruct, retStack);
@@ -886,6 +900,10 @@ uint64_t SIGILHOOK::ILCallback::getUsercallJitFunc(
 	asmjit::CodeHolder code;
 	auto env = asmjit::Environment::host();
 	env.setArch(arch);
+	if (m_trampolineEnter != nullptr || m_trampolineExit != nullptr) {
+		fail("ILCallback entry/exit callbacks are not supported for this signature");
+		return 0;
+	}
 	if (code.init(env) != asmjit::kErrorOk) return fail("ILCallback usercall CodeHolder init failed"), 0;
 
 	asmjit::StringLogger logger;
@@ -1219,6 +1237,13 @@ uint64_t* SIGILHOOK::ILCallback::getTrampolineHolder() {
 	return &m_trampolinePtr;
 }
 
+void SIGILHOOK::ILCallback::setTrampolineRefCallbacks(
+	tTrampolineRefCallback onEnter, tTrampolineRefCallback onExit, void* userData) {
+	m_trampolineEnter = onEnter;
+	m_trampolineExit = onExit;
+	m_trampolineRefUserData = userData;
+}
+
 bool SIGILHOOK::ILCallback::isGeneralReg(const asmjit::TypeId typeId) const {
 	switch (typeId) {
 	case asmjit::TypeId::kInt8:
@@ -1250,6 +1275,9 @@ bool SIGILHOOK::ILCallback::isXmmReg(const asmjit::TypeId typeId) const {
 SIGILHOOK::ILCallback::ILCallback() {
 	m_callbackBuf = 0;
 	m_trampolinePtr = 0;
+	m_trampolineEnter = nullptr;
+	m_trampolineExit = nullptr;
+	m_trampolineRefUserData = nullptr;
 }
 
 SIGILHOOK::ILCallback::~ILCallback() {

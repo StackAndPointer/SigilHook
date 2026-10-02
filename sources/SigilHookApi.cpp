@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include <filesystem>
 #include "include/sigilhook.h"
@@ -149,14 +149,79 @@ struct JitRecord {
     bool acceptingCallbacks = true;
 };
 
+// A trampoline is freed only when no thread can still be executing inside it.
+// The detour writes its address into the record; the generated JIT stub calls
+// the enter/exit callbacks around the original-function invocation.
+struct TrampolineAllocation {
+    uint64_t address = 0;
+    uint64_t size = 0;
+    bool heapAllocated = false;
+    std::atomic<bool> retiring{false};
+    std::atomic<uint32_t> inFlight{0};
+    std::mutex mutex;
+    std::condition_variable drained;
+};
+
+void freeTrampolineIfRetired(const std::shared_ptr<TrampolineAllocation>& allocation) {
+    if (allocation == nullptr || !allocation->retiring.load(std::memory_order_acquire)) return;
+    if (allocation->inFlight.load(std::memory_order_acquire) != 0) return;
+    std::lock_guard lock(allocation->mutex);
+    if (!allocation->retiring.load(std::memory_order_relaxed) ||
+        allocation->inFlight.load(std::memory_order_relaxed) != 0 || allocation->address == 0) {
+        return;
+    }
+    if (allocation->heapAllocated) {
+        delete[] reinterpret_cast<unsigned char*>(static_cast<uintptr_t>(allocation->address));
+    }
+    allocation->address = 0;
+    allocation->size = 0;
+}
+
 struct HookRecord {
     std::unique_ptr<SIGILHOOK::IHook> hook;
     std::shared_ptr<JitRecord> jit;
+    std::shared_ptr<TrampolineAllocation> trampolineAllocation;
     uint64_t trampoline = 0;
     uint64_t target = 0;
     SIGILHOOK::VFuncMap originalVFuncs;
     sigilhook_hook_type type = SIGILHOOK_HOOK_UNKNOWN;
 };
+
+std::mutex g_trampolineMutex;
+std::vector<std::shared_ptr<TrampolineAllocation>> g_trampolines;
+
+std::shared_ptr<TrampolineAllocation> registerTrampoline(
+    uint64_t address, uint64_t size, bool heapAllocated) {
+    if (address == 0) return nullptr;
+    auto allocation = std::make_shared<TrampolineAllocation>();
+    allocation->address = address;
+    allocation->size = size;
+    allocation->heapAllocated = heapAllocated;
+    std::lock_guard lock(g_trampolineMutex);
+    g_trampolines.push_back(allocation);
+    return allocation;
+}
+
+void unregisterTrampoline(const std::shared_ptr<TrampolineAllocation>& allocation) {
+    if (allocation == nullptr) return;
+    std::lock_guard lock(g_trampolineMutex);
+    g_trampolines.erase(
+        std::remove(g_trampolines.begin(), g_trampolines.end(), allocation),
+        g_trampolines.end());
+}
+
+void trampolineEnterCallback(void* userData) {
+    auto* allocation = static_cast<TrampolineAllocation*>(userData);
+    if (allocation != nullptr) allocation->inFlight.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void trampolineExitCallback(void* userData) {
+    auto* allocation = static_cast<TrampolineAllocation*>(userData);
+    if (allocation == nullptr) return;
+    if (allocation->inFlight.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        allocation->drained.notify_all();
+    }
+}
 
 std::mutex g_registryMutex;
 std::unordered_map<uint64_t, std::shared_ptr<HookRecord>> g_hooks;
@@ -461,7 +526,37 @@ sigilhook_status createHook(Factory&& factory, sigilhook_hook_type type, sigilho
 extern "C" {
 
 uint32_t SIGILHOOK_CALL sigilhook_api_version(void) {
-    return 0x0002000A;
+    return 0x0002000C;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_wait_for_trampolines(uint32_t timeoutMs) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    std::unique_lock lock(g_trampolineMutex);
+    for (;;) {
+        for (auto& allocation : g_trampolines) {
+            freeTrampolineIfRetired(allocation);
+        }
+        g_trampolines.erase(
+            std::remove_if(g_trampolines.begin(), g_trampolines.end(),
+                [](const std::shared_ptr<TrampolineAllocation>& allocation) {
+                    return allocation == nullptr || allocation->address == 0;
+                }),
+            g_trampolines.end());
+        bool pending = false;
+        for (auto& allocation : g_trampolines) {
+            if (allocation != nullptr && allocation->retiring.load(std::memory_order_acquire) &&
+                allocation->inFlight.load(std::memory_order_acquire) != 0) {
+                pending = true;
+                break;
+            }
+        }
+        if (!pending) return SIGILHOOK_OK;
+        const auto waitFor = g_trampolines.front();
+        if (waitFor == nullptr) return SIGILHOOK_OK;
+        if (waitFor->drained.wait_until(lock, deadline) == std::cv_status::timeout) {
+            return SIGILHOOK_ERROR_BUSY;
+        }
+    }
 }
 
 sigilhook_mode SIGILHOOK_CALL sigilhook_build_mode(void) {
@@ -600,6 +695,12 @@ sigilhook_status SIGILHOOK_CALL sigilhook_create_detour(
 #endif
         return true;
     }, SIGILHOOK_HOOK_DETOUR, outHook);
+    if (status == SIGILHOOK_OK) {
+        const auto record = findHook(*outHook);
+        if (record != nullptr && record->trampoline != 0) {
+            record->trampolineAllocation = registerTrampoline(record->trampoline, 0, true);
+        }
+    }
     if (status == SIGILHOOK_OK && outTrampoline != nullptr) {
         const auto record = findHook(*outHook);
         if (record != nullptr) *outTrampoline = record->trampoline;
@@ -668,6 +769,11 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle handle) {
     if (record && record->jit && record->jit->callback) {
         *record->jit->callback->getTrampolineHolder() = 0;
         record->jit->boundHook.store(0, std::memory_order_release);
+    }
+    if (record && record->trampolineAllocation) {
+        record->trampolineAllocation->retiring.store(true, std::memory_order_release);
+        freeTrampolineIfRetired(record->trampolineAllocation);
+        unregisterTrampoline(record->trampolineAllocation);
     }
     {
         std::lock_guard lock(g_registryMutex);
@@ -1020,6 +1126,11 @@ sigilhook_status SIGILHOOK_CALL sigilhook_bind_detour_to_jit(
     record->jit->target = record->target;
     if (record->jit->callback != nullptr) {
         *record->jit->callback->getTrampolineHolder() = record->trampoline;
+        if (record->trampolineAllocation != nullptr) {
+            record->jit->callback->setTrampolineRefCallbacks(
+                trampolineEnterCallback, trampolineExitCallback,
+                record->trampolineAllocation.get());
+        }
     }
     if (outHook != nullptr) *outHook = detour;
     return SIGILHOOK_OK;
