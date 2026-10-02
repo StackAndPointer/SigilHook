@@ -589,6 +589,11 @@ The C ABI covers:
 - memory read/write/protection, pattern scanning, disassembly, flags, FXSAVE/FXRSTOR, and executable snippets
 - script runtime start, load, entry call, shared values, and stop
 
+## Callback failure, unload, and trampoline lifetime
+
+A script callback that raises an exception, aborts, or exceeds the per-callback budget does not cross the JIT boundary as a C++ exception. It is recorded instead: the runtime latches a failure, refuses new callbacks, and reports it through `sigilhook_runtime_last_callback_status()` (or the script helpers `shLastCallbackStatus()` / `shCallbacksHealthy()`). A successful `sigilhook_runtime_reload*()` or `sigilhook_runtime_stop*()` clears it. Callback failures are also written to the runtime log.
+
+`sigilhook_runtime_stop()` / `sigilhook_runtime_stop_with_timeout()` now wait for two things before releasing resources: active script callbacks and any target thread still executing inside a retired trampoline. `sigilhook_wait_for_trampolines(timeout_ms)` exposes the trampoline drain step directly and returns `SIGILHOOK_ERROR_BUSY` if a thread is still inside one. Detour trampolines are retired rather than freed on `unhook`/`destroy`; the registry frees them once the in-flight count reaches zero, so a target thread cannot jump into released memory during hot reload.
 Advanced users can create a native JIT callback with `sigilhook_create_jit_callback()`, then bind it to a detour with `sigilhook_bind_detour_to_jit()`. The script helpers implement the same model through `shCreateScriptJit()`, `shBindDetourToJit()`, and `shDestroyJit()`.
 
 ## 13. Troubleshooting

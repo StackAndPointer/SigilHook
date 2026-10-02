@@ -573,6 +573,11 @@ C ABI 覆盖：
 - 内存读写/保护、特征码、反汇编、标志、FXSAVE/FXRSTOR 和可执行片段
 - 脚本运行时启动、加载、入口调用、共享值和停止
 
+## 12.1 回调失败、卸载与 trampoline 生命周期
+
+脚本回调抛异常、被中止或超过单次回调预算时，不会以 C++ 异常穿过 JIT 边界。运行时会记录并锁存该失败，停止分发新的回调，并通过 `sigilhook_runtime_last_callback_status()`（脚本层为 `shLastCallbackStatus()` / `shCallbacksHealthy()`）报告。成功执行 `sigilhook_runtime_reload*()` 或 `sigilhook_runtime_stop*()` 会清除该状态。失败原因同时写入运行时日志。
+
+`sigilhook_runtime_stop()` / `sigilhook_runtime_stop_with_timeout()` 释放资源前会等待两件事：仍在执行的脚本回调，以及仍停留在已退役 trampoline 中的目标线程。`sigilhook_wait_for_trampolines(timeout_ms)` 直接暴露 trampoline 回收步骤，若有线程仍在其中会返回 `SIGILHOOK_ERROR_BUSY`。Detour 的 trampoline 在 `unhook` / `destroy` 时只是标记退役，不再立即释放；注册表会在在途计数归零后回收，因此热重载期间目标线程不会跳入已释放内存。
 高级用户可以用 `sigilhook_create_jit_callback()` 创建原生 JIT 回调，再用 `sigilhook_bind_detour_to_jit()` 绑定到 Detour。脚本层的 `shCreateScriptJit()`、`shBindDetourToJit()`、`shDestroyJit()` 实现同一模型。
 
 ## 13. 排错

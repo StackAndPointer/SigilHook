@@ -208,6 +208,22 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             endif()
             add_test(NAME SigilHookHotReloadSmokeTest COMMAND SigilHookHotReloadSmokeTest)
             set_tests_properties(SigilHookHotReloadSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
+
+            add_executable(SigilHookUsageExamplesCompileTest
+                ${PROJECT_SOURCE_DIR}/Examples/Scripts/UsageExamplesCompileCheck.cpp
+            )
+            target_compile_features(SigilHookUsageExamplesCompileTest PRIVATE cxx_std_20)
+            target_compile_definitions(SigilHookUsageExamplesCompileTest PRIVATE
+                SIGILHOOK_USAGE_EXAMPLE_DIRECTORY=L"${PROJECT_SOURCE_DIR}/Examples/Scripts/UsageExamples"
+                SIGILHOOK_USAGE_HEADER=L"${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash")
+            target_include_directories(SigilHookUsageExamplesCompileTest PRIVATE ${PROJECT_SOURCE_DIR}/include)
+            if(SIGILHOOK_USE_EXTERNAL_ASMJIT)
+                target_link_libraries(SigilHookUsageExamplesCompileTest PRIVATE SigilHookDll)
+            else()
+                target_link_libraries(SigilHookUsageExamplesCompileTest PRIVATE SigilHookDll asmjit)
+            endif()
+            add_test(NAME SigilHookUsageExamplesCompileTest COMMAND SigilHookUsageExamplesCompileTest)
+            set_tests_properties(SigilHookUsageExamplesCompileTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
         endif()
     endif()
 endif()

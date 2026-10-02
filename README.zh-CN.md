@@ -37,6 +37,7 @@ SigilHook 是一个基于 PolyHook 2、由 AngelScript 驱动的 x86/x64 Hook �
 - [English README](README.md)
 - [English usage guide](docs/USAGE.md)
 - [中文使用说明](docs/USAGE.zh-CN.md)
+- [使用示例（AngelScript）](Examples/Scripts/UsageExamples/README.md)
 
 ## 脚本布局
 

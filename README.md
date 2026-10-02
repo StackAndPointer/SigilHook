@@ -39,6 +39,7 @@ This section summarizes the deliberate additions on top of the two upstream proj
 - [中文 README](README.zh-CN.md)
 - [English usage guide](docs/USAGE.md)
 - [中文使用说明](docs/USAGE.zh-CN.md)
+- [Usage examples (AngelScript)](Examples/Scripts/UsageExamples/README.md)
 
 ## Script layout
 
