@@ -35,9 +35,11 @@ SigilHook 是一个基于 PolyHook 2、由 AngelScript 驱动的 x86/x64 Hook �
 ## 文档
 
 - [English README](README.md)
+- [中文 README](README.zh-CN.md)
 - [English usage guide](docs/USAGE.md)
 - [中文使用说明](docs/USAGE.zh-CN.md)
 - [使用示例（AngelScript）](Examples/Scripts/UsageExamples/README.md)
+- [使用示例（中文）](Examples/Scripts/UsageExamples/README.zh-CN.md)
 
 ## 脚本布局
 
@@ -143,6 +145,8 @@ shSetReg16(SH_REG_CX, low + 1);
 
 寄存器名不区分大小写：`AX/CX/DX/BX/SP/BP/SI/DI/R8..R15`，也包括常用的 `EAX/RAX`、`R8D/R8W/R8B` 别名。x86 帧只暴露 `AX` 到 `DI`。`SP` 只读。x86 上可用 XMM0-7，x64 上可用 XMM0-15。lane 0 是低 64 位，lane 1 是高 64 位；float 和 double 辅助函数使用 lane 0。`shFloatBits`/`shBitsFloat` 和 `shDoubleBits`/`shBitsDouble` 在浮点值和整数位表示之间转换。不包括段寄存器、控制寄存器和调试寄存器。flags 会在调用原函数或最终返回前恢复，但方向标志和陷阱状态这类值不应跨语言 ABI 依赖。
 
+AngelScript 回调可以直接读写 XMM 寄存器：用 `shXmm`、`shSetXmm` 操作 128 位值，用 `shXmmFloat`/`shSetXmmFloat` 和 `shXmmDouble`/`shSetXmmDouble` 操作 lane 0 上的 float/double，用 `shFloatBits`/`shBitsFloat` 和 `shDoubleBits`/`shBitsDouble` 转换浮点值与整数位表示。x64 浮点参数通过 XMM 同步；x86 标准浮点参数走栈传递，因此使用 `shSetArg`。
+
 被映射的参数可以同时通过 `shArg` 和它的寄存器别名访问。如果 `shSetArg` 显式修改了该参数，参数值会优先于 `shSetReg`；否则会应用映射寄存器的写入。
 
 `shInstructionPointer()` 报告被 Hook 的目标地址。调用 `shSetInstructionPointer(address)` 会在回调恢复映射参数和 flags 之后重定向控制流。重定向会使用一个 volatile scratch 寄存器（x64 是 `R10`，x86 是 `EAX`），因此自定义映射在需要重定向时不应把参数分配给该寄存器。
@@ -234,8 +238,6 @@ void onTarget(SHCallContext@ ctx) {
     ctx.continueOriginal();
 }
 ```
-
-AngelScript 回调可以用 `shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble` 和 `shSetXmmDouble` 读写 XMM 寄存器；用 `shFloatBits`/`shBitsFloat` 和 `shDoubleBits`/`shBitsDouble` 在浮点值和整数表示之间转换。x86 上可用 XMM0-7，x64 上可用 XMM0-15；lane 0 是低 64 位，lane 1 是高 64 位。float 和 double 辅助函数使用 lane 0。x64 浮点参数通过 XMM 同步；x86 标准浮点参数因为走栈传递，所以使用 `shSetArg`。
 
 ## C ABI
 
