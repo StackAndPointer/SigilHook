@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 StackAndPointer
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 //
 // UsageExamples entry point. Only the root main.as may define main()/unload().

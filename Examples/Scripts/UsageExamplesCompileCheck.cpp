@@ -9,6 +9,7 @@
 #include "sigilhook.h"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -39,6 +40,16 @@ int main() {
     if (error) {
         std::cerr << "failed to copy standard header: " << error.message() << '\n';
         return 1;
+    }
+    {
+        std::ofstream entry(directory / "main.as", std::ios::binary | std::ios::trunc);
+        entry << "#include \"SigilHook.ash\"\n"
+                 "void main() {}\n"
+                 "void unload() {}\n";
+        if (!entry.good()) {
+            std::cerr << "failed to stage compile-only entry\n";
+            return 1;
+        }
     }
 
     const std::wstring wide = directory.wstring();
