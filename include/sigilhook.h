@@ -279,6 +279,11 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(c
 // stopped; this function lets native callers observe the failure instead of
 // relying on the log. out_message is optional and copies up to capacity bytes
 // of a UTF-8 description.
+// Blocks up to timeout_ms for retired trampolines that are still in flight to
+// drain and be freed. Returns SIGILHOOK_OK when all retired trampolines were
+// reclaimed, or SIGILHOOK_ERROR_BUSY when some are still executing.
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_wait_for_trampolines(uint32_t timeout_ms);
+
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_last_callback_status(
     char* out_message, size_t message_capacity);
 
