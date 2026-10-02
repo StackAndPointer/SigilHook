@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "sigilhook.h"
 
@@ -663,6 +663,45 @@ void unload() {
     CHECK(sigilhook_runtime_get_shared_u64("slowUnloaded", &slowUnloaded) == SIGILHOOK_OK);
     CHECK(slowUnloaded == 1);
     CloseHandle(slowThread);
+
+    const auto failureRoot = negativeRoot / "callback-failure";
+    CHECK(copyStandardHeader(failureRoot));
+    CHECK(sigilhook_runtime_set_shared_u64("failureCallbackCalls", 0) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_set_shared_u64("failureZero", 0) == SIGILHOOK_OK);
+    CHECK(writeScriptFile(failureRoot / "main.as", R"SIGIL(
+#include "SigilHook.ash"
+
+uint64 g_failureHook = SH_INVALID_HANDLE;
+
+void failingCallback() {
+    shSetSharedU64("failureCallbackCalls", shSharedU64("failureCallbackCalls") + 1);
+    const uint64 zero = shSharedU64("failureZero");
+    const uint64 failure = 1 / zero;
+}
+
+void main() {
+    g_failureHook = shHookScript(shSharedU64("target"), "void failingCallback()", "int:int");
+    if (!shIsValidHook(g_failureHook)) shSetSharedU64("failureHookCreateFailed", 1);
+}
+
+void unload() {
+    if (shIsValidHook(g_failureHook)) shDestroyHook(g_failureHook);
+}
+)SIGIL"));
+    CHECK(sigilhook_runtime_load_directory(failureRoot.c_str()) == SIGILHOOK_OK);
+    CHECK(target(1) == 2);
+    uint64_t failureCallbackCalls = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("failureCallbackCalls", &failureCallbackCalls) == SIGILHOOK_OK);
+    CHECK(failureCallbackCalls == 1);
+    CHECK(sigilhook_runtime_last_callback_status(nullptr, 0) != SIGILHOOK_OK);
+    char callbackError[512] = {};
+    CHECK(sigilhook_runtime_last_callback_status(callbackError, sizeof(callbackError)) == SIGILHOOK_ERROR_SCRIPT);
+    CHECK(std::strstr(callbackError, "failingCallback") != nullptr);
+    CHECK(target(1) == 2);
+    CHECK(sigilhook_runtime_get_shared_u64("failureCallbackCalls", &failureCallbackCalls) == SIGILHOOK_OK);
+    CHECK(failureCallbackCalls == 1);
+    CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_last_callback_status(nullptr, 0) == SIGILHOOK_OK);
 
     const auto missingMain = negativeRoot / "missing-main";
     CHECK(writeScriptFile(missingMain / "legacy.as", "void legacy() {}\n"));

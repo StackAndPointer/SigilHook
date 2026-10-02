@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "include/sigilhook.h"
 
@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cstring>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -56,9 +57,19 @@ struct RuntimeState {
     std::unordered_set<uint64_t> scriptHooks;
     std::atomic<bool> started{false};
     std::atomic<bool> stopping{false};
+    // Set when a script callback fails in a way the caller must observe. New
+    // callbacks are rejected while this is set so a broken script cannot keep
+    // running hooks with silently wrong behavior. Cleared by a successful
+    // reload or stop.
+    std::atomic<bool> callbackFailed{false};
     std::atomic<uint32_t> activeCallbacks{0};
     std::condition_variable callbackCondition;
     std::mutex callbackMutex;
+    // Structured failure from the most recent script callback. Protected by
+    // callbackStatusMutex so native callers can read it after a stop/reload.
+    std::mutex callbackStatusMutex;
+    sigilhook_status lastCallbackStatus = SIGILHOOK_OK;
+    std::string lastCallbackError;
 };
 
 RuntimeState g_runtime;
@@ -555,9 +566,21 @@ void scriptSkipOriginal() {
 
 bool beginScriptCallback() {
     std::lock_guard lock(g_runtime.callbackMutex);
-    if (g_runtime.stopping.load(std::memory_order_acquire)) return false;
+    if (g_runtime.stopping.load(std::memory_order_acquire) ||
+        g_runtime.callbackFailed.load(std::memory_order_acquire)) {
+        return false;
+    }
     g_runtime.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
     return true;
+}
+
+void recordCallbackFailure(sigilhook_status status, std::string message) {
+    {
+        std::lock_guard lock(g_runtime.callbackStatusMutex);
+        g_runtime.lastCallbackStatus = status;
+        g_runtime.lastCallbackError = std::move(message);
+    }
+    g_runtime.callbackFailed.store(true, std::memory_order_release);
 }
 
 struct ExecutionBudget {
@@ -567,7 +590,9 @@ struct ExecutionBudget {
 
 void executionLineCallback(asIScriptContext* context, ExecutionBudget* budget) {
     if (context == nullptr || budget == nullptr) return;
-    if ((budget->cancelOnStop && g_runtime.stopping.load(std::memory_order_acquire)) ||
+    if ((budget->cancelOnStop &&
+         (g_runtime.stopping.load(std::memory_order_acquire) ||
+          g_runtime.callbackFailed.load(std::memory_order_acquire))) ||
         std::chrono::steady_clock::now() >= budget->deadline) {
         context->Abort();
     }
@@ -612,7 +637,29 @@ void scriptJitCallback(sigilhook_call_frame* frame, void* userData) {
         if (context->Prepare(binding->callback) >= 0) {
             const int result = context->Execute();
             if (result != asEXECUTION_FINISHED) {
-                writeLog("script callback did not finish normally: " + binding->declaration);
+                const char* exception = context->GetExceptionString();
+                int exceptionColumn = 0;
+                const char* exceptionSection = nullptr;
+                const int exceptionLine = context->GetExceptionLineNumber(
+                    &exceptionColumn, &exceptionSection);
+                std::ostringstream message;
+                message << "script callback '" << binding->declaration
+                        << "' did not finish normally (state=" << result << ")";
+                if (exception != nullptr) {
+                    message << ": " << exception;
+                }
+                if (exceptionSection != nullptr) {
+                    message << " at " << exceptionSection << ':' << exceptionLine
+                            << ':' << exceptionColumn;
+                }
+                writeLog(message.str());
+                // Exceptions/aborts are surfaced through the runtime status; the
+                // hook stops dispatching new callbacks until a successful reload.
+                recordCallbackFailure(
+                    result == asEXECUTION_ABORTED
+                        ? SIGILHOOK_ERROR_BUSY
+                        : SIGILHOOK_ERROR_SCRIPT,
+                    message.str());
             }
         }
         context->ClearLineCallback();
@@ -1129,6 +1176,14 @@ asBYTE scriptStatusSharedU64(const std::string& name, asQWORD& outValue) {
     outValue = value;
     return static_cast<asBYTE>(status);
 }
+
+asBYTE scriptLastCallbackStatusMessage(std::string& outMessage) {
+    std::vector<char> buffer(4096, '\0');
+    const sigilhook_status status =
+        sigilhook_runtime_last_callback_status(buffer.data(), buffer.size());
+    outMessage = buffer.data();
+    return static_cast<asBYTE>(status);
+}
 asBYTE scriptInvokeUsercall(
     asQWORD target, const std::string& returnType, const std::string& parameters,
     const std::string& convention, const CScriptArray& arguments, asQWORD& outReturnValue) {
@@ -1263,6 +1318,7 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 callEntry(const string &in)", asFUNCTION(scriptCallEntry), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 setSharedU64Status(const string &in, uint64)", asFUNCTION(scriptStatusSetSharedU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 sharedU64Status(const string &in, uint64 &out)", asFUNCTION(scriptStatusSharedU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 sigilhook_runtime_last_callback_status(string &out)", asFUNCTION(scriptLastCallbackStatusMessage), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 invokeUsercall(uint64, const string &in, const string &in, const string &in, const array<uint64> &in, uint64 &out)", asFUNCTION(scriptInvokeUsercall), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 nativeAddress(const string &in, const string &in, const string &in)", asFUNCTION(scriptNativeAddress), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 invokeNativeBlob(uint64, const string &in, const string &in, const array<uint8> &in, array<uint8> &inout)", asFUNCTION(scriptInvokeNativeBlob), asCALL_CDECL);
@@ -1460,6 +1516,36 @@ bool destroyScriptBindings() {
     return true;
 }
 
+// Tear down the currently loaded application while keeping the engine alive for
+// a retry. Used by the main() rollback path and by a failed load. The caller
+// must hold g_runtime.mutex and g_runtime.entryMutex, and must already have set
+// stopping so that no new callback can start.
+bool rollbackLoadedApplication(std::chrono::steady_clock::time_point deadline) {
+    if (!waitForScriptCallbacks(deadline)) {
+        writeLog("rollback deferred: quiesce target calls and stop the runtime before unloading");
+        return false;
+    }
+    const bool previousUnloading = g_unloading;
+    g_unloading = true;
+    for (auto iterator = g_runtime.modules.rbegin(); iterator != g_runtime.modules.rend(); ++iterator) {
+        if (!runEntry(*iterator, "void unload()", deadline)) {
+            writeLog("rollback unload() did not finish normally");
+        }
+    }
+    g_unloading = previousUnloading;
+    if (!destroyScriptBindings()) {
+        writeLog("rollback deferred: script bindings could not be destroyed");
+        return false;
+    }
+    sigilhook_clear_invoker_cache();
+    sigilhook_modules_shutdown();
+    for (asIScriptModule* module : g_runtime.modules) {
+        if (module != nullptr) module->Discard();
+    }
+    g_runtime.modules.clear();
+    return true;
+}
+
 fs::path modulePath() {
 #if defined(_WIN32)
     HMODULE module = nullptr;
@@ -1482,6 +1568,12 @@ sigilhook_status startRuntime(const fs::path& requestedDirectory) {
     std::lock_guard lock(g_runtime.mutex);
     if (g_runtime.stopping) return SIGILHOOK_ERROR_BUSY;
     if (g_runtime.started) return SIGILHOOK_OK;
+    g_runtime.callbackFailed.store(false, std::memory_order_release);
+    {
+        std::lock_guard statusLock(g_runtime.callbackStatusMutex);
+        g_runtime.lastCallbackStatus = SIGILHOOK_OK;
+        g_runtime.lastCallbackError.clear();
+    }
     g_runtime.scriptDirectory = requestedDirectory.empty() ? modulePath() / "SigilHook" : requestedDirectory;
     g_runtime.logPath = g_runtime.scriptDirectory / "logs" / "SigilHook.log";
     std::error_code error;
@@ -1508,7 +1600,6 @@ sigilhook_status startRuntime(const fs::path& requestedDirectory) {
 
 sigilhook_status loadDirectory(const fs::path& directory) {
     if (g_runtime.stopping || asGetActiveContext() != nullptr) return SIGILHOOK_ERROR_BUSY;
-    const bool startedHere = !g_runtime.started.load(std::memory_order_acquire);
     if (!g_runtime.started) {
         const sigilhook_status status = startRuntime(directory);
         if (status != SIGILHOOK_OK) return status;
@@ -1609,33 +1700,20 @@ sigilhook_status loadDirectory(const fs::path& directory) {
         }
     }
 
+#if defined(SIGILHOOK_COMPILE_ONLY)
+    module->Discard();
+    return SIGILHOOK_OK;
+#endif
     g_runtime.modules.push_back(module);
     if (!runEntry(module, "void main()")) {
         writeLog("entry point failed in " + (root / "main.as").string());
         g_runtime.stopping.store(true, std::memory_order_release);
         const auto rollbackDeadline = std::chrono::steady_clock::now() +
             std::chrono::milliseconds(SIGILHOOK_RUNTIME_DEFAULT_STOP_TIMEOUT_MS);
-        if (!waitForScriptCallbacks(rollbackDeadline)) {
-            writeLog("rollback deferred: quiesce target calls and stop the runtime before unloading");
+        if (!rollbackLoadedApplication(rollbackDeadline)) {
             g_runtime.stopping.store(false, std::memory_order_release);
             return SIGILHOOK_ERROR_SCRIPT;
         }
-        const bool previousUnloading = g_unloading;
-        g_unloading = true;
-        const bool unloadResult = runEntry(module, "void unload()", rollbackDeadline);
-        g_unloading = previousUnloading;
-        if (!unloadResult) {
-            writeLog("rollback unload() did not finish normally");
-        }
-        if (!destroyScriptBindings()) {
-            writeLog("rollback deferred: script bindings could not be destroyed");
-            g_runtime.stopping.store(false, std::memory_order_release);
-            return SIGILHOOK_ERROR_SCRIPT;
-        }
-        sigilhook_clear_invoker_cache();
-        sigilhook_modules_shutdown();
-        g_runtime.modules.pop_back();
-        module->Discard();
         g_runtime.stopping.store(false, std::memory_order_release);
         return failLoad(SIGILHOOK_ERROR_SCRIPT);
     }
@@ -1681,6 +1759,11 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
         g_runtime.stopping.store(false, std::memory_order_release);
         return SIGILHOOK_ERROR_BUSY;
     }
+    if (sigilhook_wait_for_trampolines(timeoutMs) != SIGILHOOK_OK) {
+        writeLog("runtime stop pending: a target thread is still inside a retired trampoline");
+        g_runtime.stopping.store(false, std::memory_order_release);
+        return SIGILHOOK_ERROR_BUSY;
+    }
     sigilhook_clear_invoker_cache();
     sigilhook_modules_shutdown();
     for (asIScriptModule* module : g_runtime.modules) {
@@ -1692,6 +1775,12 @@ sigilhook_status stopRuntime(uint32_t timeoutMs) {
         g_runtime.engine = nullptr;
     }
     g_runtime.started = false;
+    g_runtime.callbackFailed.store(false, std::memory_order_release);
+    {
+        std::lock_guard statusLock(g_runtime.callbackStatusMutex);
+        g_runtime.lastCallbackStatus = SIGILHOOK_OK;
+        g_runtime.lastCallbackError.clear();
+    }
     g_runtime.stopping.store(false, std::memory_order_release);
     sigilhook_set_log_callback(nullptr, nullptr);
     return unloadSucceeded ? SIGILHOOK_OK : SIGILHOOK_ERROR_SCRIPT;
@@ -1738,6 +1827,12 @@ sigilhook_status reloadRuntime(uint32_t timeoutMs) {
             writeLog("runtime reload failed: the runtime did not remain available for retry");
         }
         return loadStatus;
+    }
+    g_runtime.callbackFailed.store(false, std::memory_order_release);
+    {
+        std::lock_guard statusLock(g_runtime.callbackStatusMutex);
+        g_runtime.lastCallbackStatus = SIGILHOOK_OK;
+        g_runtime.lastCallbackError.clear();
     }
     writeLog("runtime reload completed");
     return SIGILHOOK_OK;
@@ -1790,6 +1885,17 @@ sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* nam
     if (iterator == g_runtime.sharedValues.end()) return SIGILHOOK_ERROR_NOT_FOUND;
     *outValue = iterator->second;
     return SIGILHOOK_OK;
+}
+
+sigilhook_status SIGILHOOK_CALL sigilhook_runtime_last_callback_status(
+    char* outMessage, size_t messageCapacity) {
+    std::lock_guard lock(g_runtime.callbackStatusMutex);
+    if (outMessage != nullptr && messageCapacity != 0) {
+        const size_t count = (std::min)(messageCapacity - 1, g_runtime.lastCallbackError.size());
+        std::memcpy(outMessage, g_runtime.lastCallbackError.data(), count);
+        outMessage[count] = '\0';
+    }
+    return g_runtime.lastCallbackStatus;
 }
 
 sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const char* declaration) {

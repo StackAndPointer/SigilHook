@@ -272,6 +272,16 @@ SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_call_entry(const
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_set_shared_u64(const char* name, uint64_t value);
 SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_get_shared_u64(const char* name, uint64_t* out_value);
 
+// Returns the structured status of the most recent script callback failure, or
+// SIGILHOOK_OK when no callback has failed since the runtime started or the
+// last successful reload. When a callback fails, the runtime stops accepting
+// new callbacks until sigilhook_runtime_reload*() succeeds or the runtime is
+// stopped; this function lets native callers observe the failure instead of
+// relying on the log. out_message is optional and copies up to capacity bytes
+// of a UTF-8 description.
+SIGILHOOK_API sigilhook_status SIGILHOOK_CALL sigilhook_runtime_last_callback_status(
+    char* out_message, size_t message_capacity);
+
 typedef enum sigilhook_native_kind {
     SIGILHOOK_NATIVE_VOID = 0,
     SIGILHOOK_NATIVE_SINT = 1,

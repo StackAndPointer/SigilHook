@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 // SigilHook standard AngelScript helpers.
 // This is intentionally one cross-architecture header. Query shBuildMode() at runtime;
@@ -676,6 +676,23 @@ uint8 shDestroyJit(uint64 jit) {
 
 uint8 shBindDetourToJit(uint64 detour, uint64 jit, uint64 &out hook) {
     return bindDetourToJit(detour, jit, hook);
+}
+
+// Returns the structured status of the most recent script callback failure, or
+// SH_OK when no callback has failed since the runtime started or the last
+// successful reload. A failed callback stops new callbacks until a successful
+// reload; use shCallbacksHealthy() for a quick boolean check.
+uint8 shLastCallbackStatus() {
+    string message;
+    return sigilhook_runtime_last_callback_status(message);
+}
+
+uint8 shLastCallbackStatus(string &out message) {
+    return sigilhook_runtime_last_callback_status(message);
+}
+
+bool shCallbacksHealthy() {
+    return shLastCallbackStatus() == SH_OK;
 }
 
 array<uint8>@ shReadBytes(uint64 address, uint size) {
