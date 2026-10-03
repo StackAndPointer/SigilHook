@@ -1,4 +1,4 @@
-# SigilHook
+﻿# SigilHook
 
 Copyright (c) 2026 StackAndPointer
 
@@ -116,6 +116,8 @@ Native callers can also trigger the same path directly with
 `sigilhook_runtime_reload()` or `sigilhook_runtime_reload_with_timeout()`. Scripts
 can call `shReloadStatus()` and `shReloadWithTimeoutStatus(timeoutMs)`, but
 normal hook callbacks should not reload the module that is currently executing.
+`shWaitForTrampolinesStatus(timeoutMs)` exposes the retired-trampoline drain step
+and returns `SH_ERROR_BUSY` while a target thread is still executing inside one.
 
 ## Standard helper API
 
@@ -158,11 +160,11 @@ The complete interface is grouped as follows:
 | Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shContinueOriginal`, `shResumeMid` (deprecated alias) |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArgStatus`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturnStatus`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal`, `currentContext`, `SHCallContext::getArg`, `SHCallContext::setArg`, `SHCallContext::setArgStatus`, `SHCallContext::getReg`, `SHCallContext::setReg`, `SHCallContext::getXmm`, `SHCallContext::setXmm`, `SHCallContext::getReturn`, `SHCallContext::setReturn`, `SHCallContext::setReturnStatus`, `SHCallContext::getFlags`, `SHCallContext::setFlags`, `SHCallContext::continueOriginal`, `SHCallContext::skipOriginal` |
-| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer`, `shInstructionPointerStatus`, `shSetInstructionPointerStatus`, `shContextInstructionPointerStatus`, `shContextSetInstructionPointerStatus` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shWaitForTrampolinesStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 Exact argument types and `out` parameters are defined in
 [`scripts/SigilHook.ash`](scripts/SigilHook.ash). Native callers should use
@@ -199,9 +201,14 @@ A mapped argument is available through both `shArg` and its register alias. If
 
 `shInstructionPointer()` reports the hooked target address. Calling
 `shSetInstructionPointer(address)` redirects control after the callback has
-restored mapped arguments and flags. The redirect uses one volatile scratch
-register (`R10` on x64 or `EAX` on x86), so custom mappings should not assign
-an argument to that register when redirecting.
+restored mapped arguments and flags. `shInstructionPointerStatus()` and
+`shSetInstructionPointerStatus()` provide the same operations with an explicit
+status code; the `SHCallContext` object exposes
+`getInstructionPointer[Status]()` and `setInstructionPointer[Status]()` as well.
+Redirects are unsupported for callback frames that do not carry a redirect
+destination and return `SH_ERROR_UNSUPPORTED`. The redirect uses one volatile
+scratch register (`R10` on x64 or `EAX` on x86), so custom mappings should not
+assign an argument to that register when redirecting.
 
 ## Assembly helpers
 
@@ -327,7 +334,7 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
   and callback instruction-pointer redirection
 - script runtime start, script loading, entry calls, and shutdown
 
-The current API version is `0x0002000A`. All addresses cross the ABI as `uint64_t`.
+The current API version is `0x0002000C`. All addresses cross the ABI as `uint64_t`.
 
 ## Building
 

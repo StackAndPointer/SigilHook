@@ -91,7 +91,7 @@ SigilHookReload.bat <pid>      rem 只重载指定进程 id 的宿主
 
 脚本会找到存活的 `SigilHook.<pid>` 管道，连接每个选中的管道，并等待 `OK` 请求确认。管道工作线程随后重载该宿主当前的脚本目录：停止已加载的 AngelScript 应用，重新执行 `main.as::main()`，并把结果写入 `<SigilHook.dll directory>\SigilHook\logs\SigilHook.log`。确认只表示重载请求已接受，不表示新脚本已编译成功。脚本回调无法静默退出时，重载会以 `BUSY` 失败；这种情况下不会卸载任何脚本或 Hook。失败的重载仍会停止部分启动的替换运行时，所以调用方可以修好 `main.as` 后重新加载该目录。管道仅限本地。
 
-原生调用方也可以直接用 `sigilhook_runtime_reload()` 或 `sigilhook_runtime_reload_with_timeout()` 触发同一路径。脚本可以调用 `shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)`，但普通 Hook 回调不应重载当前正在执行的模块。
+原生调用方也可以直接用 `sigilhook_runtime_reload()` 或 `sigilhook_runtime_reload_with_timeout()` 触发同一路径。脚本可以调用 `shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)`，但普通 Hook 回调不应重载当前正在执行的模块。`shWaitForTrampolinesStatus(timeoutMs)` 暴露已退役 trampoline 的回收等待步骤；目标线程仍在其内部执行时返回 `SH_ERROR_BUSY`。
 
 ## 标准辅助 API
 
@@ -120,11 +120,11 @@ SigilHookReload.bat <pid>      rem 只重载指定进程 id 的宿主
 | Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shContinueOriginal`、`shResumeMid`（兼容别名） |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
 | 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArgStatus`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturnStatus`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal`、`currentContext`、`SHCallContext::getArg`、`SHCallContext::setArg`、`SHCallContext::setArgStatus`、`SHCallContext::getReg`、`SHCallContext::setReg`、`SHCallContext::getXmm`、`SHCallContext::setXmm`、`SHCallContext::getReturn`、`SHCallContext::setReturn`、`SHCallContext::setReturnStatus`、`SHCallContext::getFlags`、`SHCallContext::setFlags`、`SHCallContext::continueOriginal`、`SHCallContext::skipOriginal` |
-| 寄存器和控流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
+| 寄存器和控流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer`、`shInstructionPointerStatus`、`shSetInstructionPointerStatus`、`shContextInstructionPointerStatus`、`shContextSetInstructionPointerStatus` |
 | 内存和扫描 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编和反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
 | 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
-| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shReloadStatus`、`shReloadWithTimeoutStatus`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
+| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shReloadStatus`、`shReloadWithTimeoutStatus`、`shWaitForTrampolinesStatus`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
 
 确切的参数类型和 `out` 参数定义见 [`scripts/SigilHook.ash`](scripts/SigilHook.ash)。原生调用方应使用 [`include/sigilhook.h`](include/sigilhook.h) 中对应的声明。
 
@@ -151,7 +151,7 @@ AngelScript 回调可以直接读写 XMM 寄存器：用 `shXmm`、`shSetXmm` �
 
 被映射的参数可以同时通过 `shArg` 和它的寄存器别名访问。如果 `shSetArg` 显式修改了该参数，参数值会优先于 `shSetReg`；否则会应用映射寄存器的写入。
 
-`shInstructionPointer()` 报告被 Hook 的目标地址。调用 `shSetInstructionPointer(address)` 会在回调恢复映射参数和 flags 之后重定向控制流。重定向会使用一个 volatile scratch 寄存器（x64 是 `R10`，x86 是 `EAX`），因此自定义映射在需要重定向时不应把参数分配给该寄存器。
+`shInstructionPointer()` 报告被 Hook 的目标地址。调用 `shSetInstructionPointer(address)` 会在回调恢复映射参数和 flags 之后重定向控制流。`shInstructionPointerStatus()` 和 `shSetInstructionPointerStatus()` 是同一操作的显式状态版本；`SHCallContext` 也提供 `getInstructionPointer[Status]()` 和 `setInstructionPointer[Status]()`。没有重定向目的地的回调帧会返回 `SH_ERROR_UNSUPPORTED`。重定向会使用一个 volatile scratch 寄存器（x64 是 `R10`，x86 是 `EAX`），因此自定义映射在需要重定向时不应把参数分配给该寄存器。
 
 ## 汇编辅助
 
@@ -253,7 +253,7 @@ void onTarget(SHCallContext@ ctx) {
 - Zydis 反汇编、CMP/TEST flags、FXSAVE/FXRSTOR、可执行片段，以及回调指令指针重定向
 - 脚本运行时启动、脚本加载、入口调用和停止
 
-当前 API 版本是 `0x0002000A`。所有地址都以 `uint64_t` 跨 ABI 传递。Hook 构造返回状态码，不把 C++ 异常抛出边界。
+当前 API 版本是 `0x0002000C`。所有地址都以 `uint64_t` 跨 ABI 传递。Hook 构造返回状态码，不把 C++ 异常抛出边界。
 
 ## 构建
 

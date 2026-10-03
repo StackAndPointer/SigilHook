@@ -1,4 +1,4 @@
-# SigilHook Usage Guide
+﻿# SigilHook Usage Guide
 
 Copyright (c) 2026 StackAndPointer
 
@@ -221,7 +221,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-The current C API version is `0x0002000A`.
+The current C API version is `0x0002000C`.
 
 `sigilhook_invoke_usercall` caches generated invoker stubs by target and
 signature. Runtime shutdown clears that cache. A native host that uses the C
@@ -256,11 +256,11 @@ The standard header is the public script API. Its functions are grouped below:
 | Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shContinueOriginal`, `shResumeMid` (deprecated alias) |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
 | Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArgStatus`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturnStatus`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
-| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
+| Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer`, `shInstructionPointerStatus`, `shSetInstructionPointerStatus`, `shContextInstructionPointerStatus`, `shContextSetInstructionPointerStatus` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
 | Explicit status APIs | `shCreateDetour`, `shCreateBreakpoint`, `shCreateHardwareBreakpoint`, `shCreateIat`, `shCreateEat`, `shCreateVFuncEntries`, `shCreateVTableEntries`, `shInstallHook`, `shDestroyHookStatus`, `shRemoveHook`, `shRehookStatus`, `shSetHookedStatus`, `shIsHookedStatus`, `shHookTypeStatus`, `shSetDebugStatus`, `shTrampolineStatus`, `shOriginalVFuncStatus`, `shMaxDepthStatus`, `shSetMaxDepthStatus`, `shSetFollowCallStatus`, `shDetourSchemeStatus`, `shSetDetourSchemeStatus` |
-| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
+| Advanced runtime | `shCreateScriptJit`, `shDestroyJit`, `shBindDetourToJit`, `shLoadDirectory`, `shReloadStatus`, `shReloadWithTimeoutStatus`, `shWaitForTrampolinesStatus`, `shCallEntry`, `shSetSharedU64`, `shSharedU64`, `shSetSharedU64Status`, `shSharedU64Status`, `shCallUsercall`, `shNativeAddress`, `shInvokeNativeBlob`, `shNativeThrow`, `shNativeStringBytes`, `shBufferAddress` |
 
 The exact declarations, parameter widths, return values, and `out` parameters
 are defined by [`scripts/SigilHook.ash`](../scripts/SigilHook.ash). Native
@@ -454,7 +454,7 @@ uint64 ip = shInstructionPointer();
 shSetInstructionPointer(trampoline);
 ```
 
-`shSetInstructionPointer()` redirects control after mapped arguments and flags are restored. It uses one volatile scratch register (`EAX` on x86 or `R10` on x64), so avoid assigning a custom-mapped argument to that register when redirecting.
+`shSetInstructionPointer()` redirects control after mapped arguments and flags are restored. `shInstructionPointerStatus()` and `shSetInstructionPointerStatus()` are the explicit-status forms; `SHCallContext` also exposes `getInstructionPointer[Status]()` and `setInstructionPointer[Status]()`. A callback frame without a redirect destination returns `SH_ERROR_UNSUPPORTED`. The redirect uses one volatile scratch register (`EAX` on x86 or `R10` on x64), so avoid assigning a custom-mapped argument to that register when redirecting.
 
 ## 9. Memory, pattern, and assembly helpers
 
@@ -513,7 +513,7 @@ shSetSharedU64("seed", 42);
 uint64 seed = shSharedU64("seed");
 ```
 
-Status forms are `shSetSharedU64Status()` and `shSharedU64Status()`. `shCallEntry("void myEntry()")` invokes a function in the loaded application module. `shLoadDirectory()` is available for explicit loading, but the normal deployment path is the DLL autoload described above. `shReloadStatus()` and `shReloadWithTimeoutStatus(timeoutMs)` stop and reload the current application; call them from native-driven tools rather than from a callback that is currently executing in that module.
+Status forms are `shSetSharedU64Status()` and `shSharedU64Status()`. `shCallEntry("void myEntry()")` invokes a function in the loaded application module. `shLoadDirectory()` is available for explicit loading, but the normal deployment path is the DLL autoload described above. `shReloadStatus()` and `shReloadWithTimeoutStatus(timeoutMs)` stop and reload the current application; call them from native-driven tools rather than from a callback that is currently executing in that module. `shWaitForTrampolinesStatus(timeoutMs)` waits for retired detour trampolines that still have target threads executing inside them.
 
 ## 11. Error handling and logs
 

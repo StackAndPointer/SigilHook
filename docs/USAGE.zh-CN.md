@@ -208,7 +208,7 @@ shLog("hello");
 string statusText = shStatusString(SH_OK);
 ```
 
-当前 C API 版本是 `0x0002000A`。
+当前 C API 版本是 `0x0002000C`。
 
 `sigilhook_invoke_usercall` 会按目标地址和签名缓存生成的调用桩。运行时停止时会自动清理该缓存；如果原生宿主持续使用 C ABI 而不停止运行时，应在这些目标不再使用时显式调用
 `sigilhook_clear_invoker_cache()`。
@@ -241,11 +241,11 @@ SH_ERROR_EXCEPTION
 | Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shContinueOriginal`、`shResumeMid`（兼容别名） |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
 | 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArgStatus`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturnStatus`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
-| 寄存器与控制流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
+| 寄存器与控制流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer`、`shInstructionPointerStatus`、`shSetInstructionPointerStatus`、`shContextInstructionPointerStatus`、`shContextSetInstructionPointerStatus` |
 | 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
 | 显式状态 API | `shCreateDetour`、`shCreateBreakpoint`、`shCreateHardwareBreakpoint`、`shCreateIat`、`shCreateEat`、`shCreateVFuncEntries`、`shCreateVTableEntries`、`shInstallHook`、`shDestroyHookStatus`、`shRemoveHook`、`shRehookStatus`、`shSetHookedStatus`、`shIsHookedStatus`、`shHookTypeStatus`、`shSetDebugStatus`、`shTrampolineStatus`、`shOriginalVFuncStatus`、`shMaxDepthStatus`、`shSetMaxDepthStatus`、`shSetFollowCallStatus`、`shDetourSchemeStatus`、`shSetDetourSchemeStatus` |
-| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shReloadStatus`、`shReloadWithTimeoutStatus`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
+| 高级运行时 | `shCreateScriptJit`、`shDestroyJit`、`shBindDetourToJit`、`shLoadDirectory`、`shReloadStatus`、`shReloadWithTimeoutStatus`、`shWaitForTrampolinesStatus`、`shCallEntry`、`shSetSharedU64`、`shSharedU64`、`shSetSharedU64Status`、`shSharedU64Status`、`shCallUsercall`、`shNativeAddress`、`shInvokeNativeBlob`、`shNativeThrow`、`shNativeStringBytes`、`shBufferAddress` |
 
 具体声明、参数宽度、返回值和 `out` 参数以
 [`scripts/SigilHook.ash`](../scripts/SigilHook.ash) 为准。原生集成应使用对应的
@@ -436,7 +436,7 @@ uint64 ip = shInstructionPointer();
 shSetInstructionPointer(trampoline);
 ```
 
-`shSetInstructionPointer()` 会在恢复映射参数和标志后重定向控制流。它使用一个易失寄存器（x86 为 `EAX`，x64 为 `R10`），需要重定向时不要把自定义参数映射到该寄存器。
+`shSetInstructionPointer()` 会在恢复映射参数和标志后重定向控制流。`shInstructionPointerStatus()` 和 `shSetInstructionPointerStatus()` 是显式状态版本；`SHCallContext` 也提供 `getInstructionPointer[Status]()` 和 `setInstructionPointer[Status]()`。没有重定向目的地的回调帧会返回 `SH_ERROR_UNSUPPORTED`。重定向使用一个易失寄存器（x86 为 `EAX`，x64 为 `R10`），需要重定向时不要把自定义参数映射到该寄存器。
 
 ## 9. 内存、特征码与汇编辅助
 
@@ -495,7 +495,7 @@ shSetSharedU64("seed", 42);
 uint64 seed = shSharedU64("seed");
 ```
 
-状态版本是 `shSetSharedU64Status()` 和 `shSharedU64Status()`。`shCallEntry("void myEntry()")` 调用已加载应用模块中的函数。`shLoadDirectory()` 可用于显式加载，但正常部署路径是上一节的 DLL 自动加载。`shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)` 会停止并重载当前应用；应从原生工具或其他驱动入口调用，不要在正在该模块中执行的回调里重载自身。
+状态版本是 `shSetSharedU64Status()` 和 `shSharedU64Status()`。`shCallEntry("void myEntry()")` 调用已加载应用模块中的函数。`shLoadDirectory()` 可用于显式加载，但正常部署路径是上一节的 DLL 自动加载。`shReloadStatus()` 和 `shReloadWithTimeoutStatus(timeoutMs)` 会停止并重载当前应用；应从原生工具或其他驱动入口调用，不要在正在该模块中执行的回调里重载自身。`shWaitForTrampolinesStatus(timeoutMs)` 会等待仍在已退役 detour trampoline 中执行的目标线程退出。
 
 ## 11. 错误处理与日志
 
