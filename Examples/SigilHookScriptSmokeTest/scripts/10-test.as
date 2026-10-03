@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "SigilHook.ash"
 #include "include/Nested.ash"
@@ -301,6 +301,30 @@ void onContext() {
 
 void onMid() {
     g_helperStep = 1012;
+    SHCallContext@ context = currentContext();
+    if (context is null) { failHelperTest(); return; }
+    const uint64 expectedTarget = shSharedU64("midTarget");
+    if (shInstructionPointer() != expectedTarget) { failHelperTest(); return; }
+    uint64 globalIp = 0;
+    if (shInstructionPointerStatus(globalIp) != SH_OK || globalIp != expectedTarget) {
+        failHelperTest();
+        return;
+    }
+    if (context.getInstructionPointer() != expectedTarget) { failHelperTest(); return; }
+    uint64 currentIp = 0;
+    if (context.getInstructionPointerStatus(currentIp) != SH_OK ||
+        currentIp != expectedTarget ||
+        !context.setInstructionPointer(shTrampoline(g_midHook)) ||
+        context.setInstructionPointerStatus(shTrampoline(g_midHook)) != SH_OK ||
+        context.getInstructionPointer() != shTrampoline(g_midHook) ||
+        !shSetInstructionPointer(shTrampoline(g_midHook)) ||
+        shSetInstructionPointerStatus(shTrampoline(g_midHook)) != SH_OK ||
+        shInstructionPointer() != shTrampoline(g_midHook) ||
+        shContextInstructionPointerStatus(context, currentIp) != SH_OK ||
+        currentIp != shTrampoline(g_midHook)) {
+        failHelperTest();
+        return;
+    }
     if (!shResumeMid(g_midHook)) { failHelperTest(); return; }
 }
 

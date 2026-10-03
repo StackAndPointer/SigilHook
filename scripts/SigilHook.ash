@@ -355,6 +355,22 @@ bool shSetInstructionPointer(uint64 address) {
     return setInstructionPointer(address);
 }
 
+uint8 shInstructionPointerStatus(uint64 &out address) {
+    return getInstructionPointerStatus(address);
+}
+
+uint8 shSetInstructionPointerStatus(uint64 address) {
+    return setInstructionPointerStatus(address);
+}
+
+uint8 shContextInstructionPointerStatus(SHCallContext@ context, uint64 &out address) {
+    return context is null ? SH_ERROR_BUSY : context.getInstructionPointerStatus(address);
+}
+
+uint8 shContextSetInstructionPointerStatus(SHCallContext@ context, uint64 address) {
+    return context is null ? SH_ERROR_BUSY : context.setInstructionPointerStatus(address);
+}
+
 string shDisAsm(uint64 address, uint maxBytes = 30) {
     return disassemble(address, maxBytes);
 }
@@ -731,6 +747,10 @@ uint8 shReloadStatus() {
 
 uint8 shReloadWithTimeoutStatus(uint timeoutMs) {
     return reloadRuntimeWithTimeout(timeoutMs);
+}
+
+uint8 shWaitForTrampolinesStatus(uint timeoutMs) {
+    return waitForTrampolines(timeoutMs);
 }
 
 uint8 shCallEntry(const string &in declaration) {

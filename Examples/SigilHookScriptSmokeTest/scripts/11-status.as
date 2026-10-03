@@ -1,4 +1,4 @@
-// Copyright (c) 2026 StackAndPointer
+﻿// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "SigilHook.ash"
 #include "include/ModuleShared.ash"
@@ -23,10 +23,8 @@ void statusEntry() {
 }
 
 void statusSetArgOutsideCallback() {
-    if (shSetArgStatus(0, 1) != SH_ERROR_BUSY ||
-        shSetReturnStatus(1) != SH_ERROR_BUSY) {
-        shSetSharedU64("scriptBad", 3001);
-    }
+    if (shSetArgStatus(0, 1) != SH_ERROR_BUSY) { shSetSharedU64("scriptBad", 3001); return; }
+    if (shSetReturnStatus(1) != SH_ERROR_BUSY) { shSetSharedU64("scriptBad", 3002); return; }
 }
 
 void testStatusDetour() {
@@ -151,7 +149,8 @@ void testStatusMemoryAndRuntime() {
     if (shCallEntry("void statusEntry()") != SH_OK || shSharedU64("statusEntry") != 1 ||
         shLoadDirectory("") != SH_ERROR_INVALID_ARGUMENT ||
         shReloadStatus() != SH_ERROR_BUSY ||
-        shReloadWithTimeoutStatus(100) != SH_ERROR_BUSY) {
+        shReloadWithTimeoutStatus(100) != SH_ERROR_BUSY ||
+        shWaitForTrampolinesStatus(0) != SH_OK) {
         shSetSharedU64("scriptBad", 4045); return;
     }
     array<uint64> invalidArguments(1);

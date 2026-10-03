@@ -98,7 +98,7 @@ int main() {
     CHECK(unloadRuns == 2);
 
     // A failed compile must leave the runtime available for a later retry.
-    CHECK(writeFile(root / "main.as", "void main() { this is not valid AngelScript; }\n"));
+    CHECK(writeFile(root / "main.as", malformedMainSource()));
     CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_SCRIPT);
     CHECK(sigilhook_runtime_reload() == SIGILHOOK_ERROR_SCRIPT);
     CHECK(writeFile(root / "main.as", mainSource(3)));

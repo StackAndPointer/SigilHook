@@ -489,6 +489,23 @@ bool scriptSetInstructionPointer(asQWORD address) {
                g_currentFrame, static_cast<uint64_t>(address)) == SIGILHOOK_OK;
 }
 
+asBYTE scriptGetInstructionPointerStatus(asQWORD& outAddress) {
+    if (g_currentFrame == nullptr) {
+        outAddress = 0;
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    }
+    uint64_t address = 0;
+    const sigilhook_status status = sigilhook_call_frame_get_instruction_pointer(g_currentFrame, &address);
+    outAddress = static_cast<asQWORD>(address);
+    return static_cast<asBYTE>(status);
+}
+
+asBYTE scriptSetInstructionPointerStatus(asQWORD address) {
+    if (g_currentFrame == nullptr) return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    return static_cast<asBYTE>(sigilhook_call_frame_set_instruction_pointer(
+        g_currentFrame, static_cast<uint64_t>(address)));
+}
+
 std::string scriptDisassemble(asQWORD address, asUINT maxBytes) {
     char buffer[8192]{};
     size_t decoded = 0;
@@ -789,6 +806,38 @@ bool contextSetFlags(SHCallContext* context, asQWORD value) {
     if (context == nullptr || context->frame == nullptr) return false;
     return sigilhook_call_frame_set_flags(
                context->frame, static_cast<uint64_t>(value)) == SIGILHOOK_OK;
+}
+
+asQWORD contextInstructionPointer(SHCallContext* context) {
+    if (context == nullptr || context->frame == nullptr) return 0;
+    uint64_t address = 0;
+    sigilhook_call_frame_get_instruction_pointer(context->frame, &address);
+    return address;
+}
+
+asBYTE contextInstructionPointerStatus(SHCallContext* context, asQWORD& outAddress) {
+    outAddress = 0;
+    if (context == nullptr || context->frame == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    }
+    uint64_t address = 0;
+    const sigilhook_status status = sigilhook_call_frame_get_instruction_pointer(context->frame, &address);
+    outAddress = static_cast<asQWORD>(address);
+    return static_cast<asBYTE>(status);
+}
+
+bool contextSetInstructionPointer(SHCallContext* context, asQWORD address) {
+    if (context == nullptr || context->frame == nullptr) return false;
+    return sigilhook_call_frame_set_instruction_pointer(
+               context->frame, static_cast<uint64_t>(address)) == SIGILHOOK_OK;
+}
+
+asBYTE contextSetInstructionPointerStatus(SHCallContext* context, asQWORD address) {
+    if (context == nullptr || context->frame == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    }
+    return static_cast<asBYTE>(sigilhook_call_frame_set_instruction_pointer(
+        context->frame, static_cast<uint64_t>(address)));
 }
 
 void contextContinue(SHCallContext* context) {
@@ -1207,6 +1256,10 @@ asBYTE scriptReloadRuntimeWithTimeout(asUINT timeoutMs) {
     return static_cast<asBYTE>(sigilhook_runtime_reload_with_timeout(timeoutMs));
 }
 
+asBYTE scriptWaitForTrampolines(asUINT timeoutMs) {
+    return static_cast<asBYTE>(sigilhook_wait_for_trampolines(timeoutMs));
+}
+
 asBYTE scriptCallEntry(const std::string& declaration) {
     return static_cast<asBYTE>(sigilhook_runtime_call_entry(declaration.c_str()));
 }
@@ -1271,6 +1324,10 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterObjectMethod("SHCallContext", "uint8 setReturnStatus(uint64)", asFUNCTION(contextSetReturnStatus), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getFlags()", asFUNCTION(contextFlags), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "bool setFlags(uint64)", asFUNCTION(contextSetFlags), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint64 getInstructionPointer()", asFUNCTION(contextInstructionPointer), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint8 getInstructionPointerStatus(uint64 &out)", asFUNCTION(contextInstructionPointerStatus), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "bool setInstructionPointer(uint64)", asFUNCTION(contextSetInstructionPointer), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint8 setInstructionPointerStatus(uint64)", asFUNCTION(contextSetInstructionPointerStatus), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "void continueOriginal()", asFUNCTION(contextContinue), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "void skipOriginal()", asFUNCTION(contextSkip), asCALL_CDECL_OBJFIRST);
 
@@ -1314,6 +1371,8 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("bool setXmm(uint8, uint8, uint64)", asFUNCTION(scriptSetXmm), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getInstructionPointer()", asFUNCTION(scriptGetInstructionPointer), asCALL_CDECL);
     engine->RegisterGlobalFunction("bool setInstructionPointer(uint64)", asFUNCTION(scriptSetInstructionPointer), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 getInstructionPointerStatus(uint64 &out)", asFUNCTION(scriptGetInstructionPointerStatus), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 setInstructionPointerStatus(uint64)", asFUNCTION(scriptSetInstructionPointerStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("string disassemble(uint64, uint)", asFUNCTION(scriptDisassemble), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 disassembleStatus(uint64, uint, string &out, uint &out)", asFUNCTION(scriptDisassembleStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 hexToU64(const string &in)", asFUNCTION(scriptHexToU64), asCALL_CDECL);
@@ -1365,6 +1424,7 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 loadDirectory(const string &in)", asFUNCTION(scriptLoadDirectory), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 reloadRuntime()", asFUNCTION(scriptReloadRuntime), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 reloadRuntimeWithTimeout(uint)", asFUNCTION(scriptReloadRuntimeWithTimeout), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 waitForTrampolines(uint)", asFUNCTION(scriptWaitForTrampolines), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 callEntry(const string &in)", asFUNCTION(scriptCallEntry), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 setSharedU64Status(const string &in, uint64)", asFUNCTION(scriptStatusSetSharedU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint8 sharedU64Status(const string &in, uint64 &out)", asFUNCTION(scriptStatusSharedU64), asCALL_CDECL);
