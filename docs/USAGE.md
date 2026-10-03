@@ -255,7 +255,7 @@ The standard header is the public script API. Its functions are grouped below:
 | Hook creation | `shHookScript`, `shHookEntryContinue`, `shHookInstructionStatus`, `shHookMid` (deprecated alias), `shHookConvention`, `shHookUsercall`, `shHookNative`, `shHookBreakpoint`, `shHookHardwareBreakpoint`, `shHookIat`, `shHookEat`, `shHookVFunc`, `shHookVTable` |
 | Hook lifecycle | `shEnableHook`, `shDisableHook`, `shUnhook`, `shDestroyHook`, `shRehook`, `shIsHooked`, `shHookType`, `shTrampoline`, `shOriginalVFunc`, `shContinueOriginal`, `shResumeMid` (deprecated alias) |
 | Detour configuration | `shSetDebug`, `shSetFollowCall`, `shMaxDepth`, `shSetMaxDepth`, `shDetourScheme`, `shSetDetourScheme` |
-| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
+| Callback frame | `shArg`, `shArg8`, `shArg16`, `shArg32`, `shSetArg`, `shSetArgStatus`, `shSetArg8`, `shSetArg16`, `shSetArg32`, `shReturn`, `shReturn8`, `shReturn16`, `shReturn32`, `shSetReturn`, `shSetReturnStatus`, `shSetReturn8`, `shSetReturn16`, `shSetReturn32`, `shReturnEarly`, `shKeepOriginal`, `shSkipOriginal` |
 | Registers and control flow | `shRegisterAvailable`, `shRegisterWritable`, `shXmmAvailable`, `shReg`, `shReg8`, `shReg16`, `shReg32`, `shSetReg`, `shSetReg8`, `shSetReg16`, `shSetReg32`, `shXmm`, `shSetXmm`, `shXmmFloat`, `shSetXmmFloat`, `shXmmDouble`, `shSetXmmDouble`, `shFloatBits`, `shBitsFloat`, `shDoubleBits`, `shBitsDouble`, `shFlags`, `shSetFlags`, `shInstructionPointer`, `shSetInstructionPointer` |
 | Memory and scanning | `shReadBytes`, `shReadU8`, `shReadU16`, `shReadU32`, `shReadU64`, `shWriteBytes`, `shWriteU8`, `shWriteU16`, `shWriteU32`, `shWriteU64`, `shMemProtect`, `shMemProtectStatus`, `shFindPattern`, `shFindPatternStatus`, `shPatternSize` |
 | Assembly and disassembly | `shDisAsm`, `shDisAsmStatus`, `shHtoi`, `shParseHexStatus`, `shAsmCmp`, `shAsmTest`, `shAsmFxsave`, `shAsmFxrstor`, `shAsmRet`, `shAsmRetStatus`, `shAsmRetFree`, `shAsmMovEspAndJmp`, `shAsmMovEspAndJmpStatus`, `shAsmMovEspAndJmpFree` |
@@ -352,8 +352,10 @@ Available controls:
 
 - `shArg(index)` and `shArg8/16/32(index)` read a logical argument.
 - `shSetArg(index, value)` and `shSetArg8/16/32(index, value)` modify it.
+- `shSetArgStatus(index, value)` is the status-returning form of `shSetArg`.
 - `shReturn()` and `shReturn8/16/32()` read the pending return value.
 - `shSetReturn(value)` and `shSetReturn8/16/32(value)` override it.
+- `shSetReturnStatus(value)` is the status-returning form of `shSetReturn`.
 - `shKeepOriginal()` requests the original/trampoline call.
 - `shSkipOriginal()` suppresses the original call.
 - `shReturnEarly(value)` sets a return value and suppresses the original call.

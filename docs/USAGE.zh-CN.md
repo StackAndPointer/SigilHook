@@ -240,7 +240,7 @@ SH_ERROR_EXCEPTION
 | Hook 创建 | `shHookScript`、`shHookEntryContinue`、`shHookInstructionStatus`、`shHookMid`（兼容别名）、`shHookConvention`、`shHookUsercall`、`shHookNative`、`shHookBreakpoint`、`shHookHardwareBreakpoint`、`shHookIat`、`shHookEat`、`shHookVFunc`、`shHookVTable` |
 | Hook 生命周期 | `shEnableHook`、`shDisableHook`、`shUnhook`、`shDestroyHook`、`shRehook`、`shIsHooked`、`shHookType`、`shTrampoline`、`shOriginalVFunc`、`shContinueOriginal`、`shResumeMid`（兼容别名） |
 | Detour 配置 | `shSetDebug`、`shSetFollowCall`、`shMaxDepth`、`shSetMaxDepth`、`shDetourScheme`、`shSetDetourScheme` |
-| 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
+| 回调帧 | `shArg`、`shArg8`、`shArg16`、`shArg32`、`shSetArg`、`shSetArgStatus`、`shSetArg8`、`shSetArg16`、`shSetArg32`、`shReturn`、`shReturn8`、`shReturn16`、`shReturn32`、`shSetReturn`、`shSetReturnStatus`、`shSetReturn8`、`shSetReturn16`、`shSetReturn32`、`shReturnEarly`、`shKeepOriginal`、`shSkipOriginal` |
 | 寄存器与控制流 | `shRegisterAvailable`、`shRegisterWritable`、`shXmmAvailable`、`shReg`、`shReg8`、`shReg16`、`shReg32`、`shSetReg`、`shSetReg8`、`shSetReg16`、`shSetReg32`、`shXmm`、`shSetXmm`、`shXmmFloat`、`shSetXmmFloat`、`shXmmDouble`、`shSetXmmDouble`、`shFloatBits`、`shBitsFloat`、`shDoubleBits`、`shBitsDouble`、`shFlags`、`shSetFlags`、`shInstructionPointer`、`shSetInstructionPointer` |
 | 内存与特征码 | `shReadBytes`、`shReadU8`、`shReadU16`、`shReadU32`、`shReadU64`、`shWriteBytes`、`shWriteU8`、`shWriteU16`、`shWriteU32`、`shWriteU64`、`shMemProtect`、`shMemProtectStatus`、`shFindPattern`、`shFindPatternStatus`、`shPatternSize` |
 | 汇编与反汇编 | `shDisAsm`、`shDisAsmStatus`、`shHtoi`、`shParseHexStatus`、`shAsmCmp`、`shAsmTest`、`shAsmFxsave`、`shAsmFxrstor`、`shAsmRet`、`shAsmRetStatus`、`shAsmRetFree`、`shAsmMovEspAndJmp`、`shAsmMovEspAndJmpStatus`、`shAsmMovEspAndJmpFree` |
@@ -335,9 +335,9 @@ shKeepOriginal();
 可用控制：
 
 - `shArg(index)`、`shArg8/16/32(index)` 读取逻辑参数。
-- `shSetArg(index, value)`、`shSetArg8/16/32(index, value)` 修改参数。
+- `shSetArg(index, value)`、`shSetArg8/16/32(index, value)` 修改参数；`shSetArgStatus(index, value)` 是其状态返回版本。
 - `shReturn()`、`shReturn8/16/32()` 读取待返回值。
-- `shSetReturn(value)`、`shSetReturn8/16/32(value)` 覆盖返回值。
+- `shSetReturn(value)`、`shSetReturn8/16/32(value)` 覆盖返回值；`shSetReturnStatus(value)` 是其状态返回版本。
 - `shKeepOriginal()` 请求执行原函数/trampoline。
 - `shSkipOriginal()` 跳过原函数。
 - `shReturnEarly(value)` 设置返回值并跳过原函数。
