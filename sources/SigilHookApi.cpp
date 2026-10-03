@@ -633,10 +633,11 @@ sigilhook_status SIGILHOOK_CALL sigilhook_call_frame_set_instruction_pointer(
     if (currentMode() != SIGILHOOK::Mode::x64 && address > UINT32_MAX) {
         return fail(SIGILHOOK_ERROR_ARCH_MISMATCH, "Redirect address does not fit in x86");
     }
-    frame->instruction_pointer = address;
-    if (frame->instruction_pointer_destination != nullptr) {
-        *frame->instruction_pointer_destination = address;
+    if (frame->instruction_pointer_destination == nullptr) {
+        return fail(SIGILHOOK_ERROR_UNSUPPORTED, "This callback frame cannot redirect instruction pointer");
     }
+    frame->instruction_pointer = address;
+    *frame->instruction_pointer_destination = address;
     *frame->instruction_pointer_overridden = 1;
     return SIGILHOOK_OK;
 }

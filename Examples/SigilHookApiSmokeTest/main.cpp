@@ -540,6 +540,29 @@ int testInvalidMappings() {
     return 0;
 }
 
+int testUnsupportedInstructionPointerRedirect() {
+    uint8_t callOriginal = 1;
+    uint8_t instructionPointerOverridden = 0;
+    uint64_t redirectAddress = 0;
+    sigilhook_call_frame frame{};
+    frame.instruction_pointer = reinterpret_cast<uint64_t>(&target);
+    frame.instruction_pointer_destination = &redirectAddress;
+    frame.instruction_pointer_overridden = &instructionPointerOverridden;
+    frame.call_original = &callOriginal;
+
+    CHECK(sigilhook_call_frame_set_instruction_pointer(&frame, reinterpret_cast<uint64_t>(&redirectTarget)) == SIGILHOOK_OK);
+    CHECK(redirectAddress == reinterpret_cast<uint64_t>(&redirectTarget));
+    CHECK(instructionPointerOverridden == 1);
+
+    instructionPointerOverridden = 0;
+    redirectAddress = 0;
+    frame.instruction_pointer_destination = nullptr;
+    CHECK(sigilhook_call_frame_set_instruction_pointer(&frame, reinterpret_cast<uint64_t>(&redirectTarget)) == SIGILHOOK_ERROR_UNSUPPORTED);
+    CHECK(redirectAddress == 0);
+    CHECK(instructionPointerOverridden == 0);
+    return 0;
+}
+
 int testUsercall() {
     asmjit::JitRuntime runtime;
     const uint64_t targetAddress = makeUsercallTarget(runtime);
@@ -850,6 +873,7 @@ int main() {
     CHECK(testAssemblyHelpers() == 0);
     CHECK(testStandardConventions() == 0);
     CHECK(testInvalidMappings() == 0);
+    CHECK(testUnsupportedInstructionPointerRedirect() == 0);
     CHECK(testUsercall() == 0);
     CHECK(testXmmUsercall() == 0);
     CHECK(testPointerUsercall() == 0);
