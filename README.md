@@ -81,6 +81,14 @@ Hook callbacks can modify arguments, call `callOriginal()`, skip the original wi
 standard `shReturnEarly(value)` helper combines a return override with skipping
 the original function.
 
+Status-returning writes are also available: `shSetArgStatus(index, value)` and
+`shSetReturnStatus(value)`, plus `SHCallContext::setArgStatus` and
+`SHCallContext::setReturnStatus`. They return `SH_OK`, `SH_ERROR_BUSY`,
+`SH_ERROR_INVALID_ARGUMENT`, or `SH_ERROR_UNSUPPORTED` so scripts can distinguish
+"not inside a callback", "argument index out of range", and "this callback has no
+writable return value" instead of having `shSetArg` / `shSetReturn` fail silently.
+The original no-status functions remain compatible.
+
 The DLL initializes AngelScript on a worker thread. Call `sigilhook_runtime_stop()` before unloading the DLL; teardown is intentionally not performed from `DllMain` under the Windows loader lock. This is a required unload protocol: never call `FreeLibrary` while the runtime is started. The default stop timeout is 5000 ms; `sigilhook_runtime_stop_with_timeout()` can select another timeout. During shutdown, the runtime rejects new callbacks and the AngelScript line callback asks active scripts to abort on their own script thread. Native code blocked inside a callback cannot be cancelled; in that case stopping returns `SIGILHOOK_ERROR_BUSY`, and the hooks and engine remain alive. Do not unload the DLL; retry from a native thread or terminate the host process. Calling stop from an active AngelScript context also returns `SIGILHOOK_ERROR_BUSY`. Process termination does not require runtime teardown.
 
 On Windows, the injected DLL also starts a local named pipe for manual script
