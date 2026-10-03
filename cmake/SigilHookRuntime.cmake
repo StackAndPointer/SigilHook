@@ -12,7 +12,15 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
 
     set(SIGILHOOK_RUNTIME_SCRIPT_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHook")
     file(MAKE_DIRECTORY "${SIGILHOOK_RUNTIME_SCRIPT_DIR}")
-    configure_file("${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash" "${SIGILHOOK_RUNTIME_SCRIPT_DIR}/SigilHook.ash" COPYONLY)
+    set(SIGILHOOK_STANDARD_HEADER "${SIGILHOOK_RUNTIME_SCRIPT_DIR}/SigilHook.ash")
+    add_custom_command(OUTPUT "${SIGILHOOK_STANDARD_HEADER}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash"
+            "${SIGILHOOK_STANDARD_HEADER}"
+        DEPENDS "${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash"
+        VERBATIM
+        COMMENT "Copying SigilHook.ash")
+    add_custom_target(CopySigilHookStandardHeader DEPENDS "${SIGILHOOK_STANDARD_HEADER}")
     configure_file("${PROJECT_SOURCE_DIR}/scripts/SigilHookReload.bat" "${CMAKE_CURRENT_BINARY_DIR}/SigilHookReload.bat" COPYONLY)
 
     if(SIGILHOOK_BUILD_HEADER_GENERATOR_TESTS)
@@ -47,6 +55,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptstdstring/scriptstdstring.cpp
             ${PROJECT_SOURCE_DIR}/third_party/angelscript/sdk/add_on/scriptarray/scriptarray.cpp
         )
+        add_dependencies(SigilHookDll CopySigilHookStandardHeader)
         set_target_properties(SigilHookDll PROPERTIES
             OUTPUT_NAME SigilHook
             ARCHIVE_OUTPUT_NAME SigilHookImport
@@ -119,7 +128,15 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             set(SIGILHOOK_SCRIPT_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/SigilHookScriptSmokeTestScripts")
             file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}/nested")
             file(MAKE_DIRECTORY "${SIGILHOOK_SCRIPT_TEST_DIR}")
-            configure_file(${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash" COPYONLY)
+            set(SIGILHOOK_SCRIPT_TEST_HEADER "${SIGILHOOK_SCRIPT_TEST_DIR}/SigilHook.ash")
+            add_custom_command(OUTPUT "${SIGILHOOK_SCRIPT_TEST_HEADER}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash"
+                    "${SIGILHOOK_SCRIPT_TEST_HEADER}"
+                DEPENDS "${PROJECT_SOURCE_DIR}/scripts/SigilHook.ash"
+                VERBATIM
+                COMMENT "Copying SigilHook.ash for script smoke tests")
+            add_custom_target(CopySigilHookScriptTestHeader DEPENDS "${SIGILHOOK_SCRIPT_TEST_HEADER}")
             set(SIGILHOOK_GENERATED_BINDING "${SIGILHOOK_SCRIPT_TEST_DIR}/NativeBindingTest.ash")
             if(SIGILHOOK_BUILD_HEADER_GENERATOR_TESTS AND SIGILHOOK_BUILD_NATIVE_BINDING_TEST)
                 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -155,6 +172,7 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             add_executable(SigilHookScriptSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookScriptSmokeTest/main.cpp
             )
+            add_dependencies(SigilHookScriptSmokeTest CopySigilHookScriptTestHeader)
             if(TARGET GenerateNativeBindingAsh)
                 add_dependencies(SigilHookScriptSmokeTest GenerateNativeBindingAsh)
             endif()
