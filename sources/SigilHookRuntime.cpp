@@ -409,6 +409,15 @@ void scriptSetArgU64(asBYTE index, asQWORD value) {
     }
 }
 
+asBYTE scriptSetArgStatus(asBYTE index, asQWORD value) {
+    if (g_currentFrame == nullptr) return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    if (index >= g_currentFrame->argument_count) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    }
+    g_currentFrame->arguments[index] = static_cast<uint64_t>(value);
+    return static_cast<asBYTE>(SIGILHOOK_OK);
+}
+
 asQWORD scriptGetReturnU64() {
     return g_currentFrame == nullptr || g_currentFrame->return_value == nullptr ? 0 : *g_currentFrame->return_value;
 }
@@ -420,6 +429,18 @@ void scriptSetReturnU64(asQWORD value) {
             *g_currentFrame->return_value_overridden = 1;
         }
     }
+}
+
+asBYTE scriptSetReturnStatus(asQWORD value) {
+    if (g_currentFrame == nullptr) return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    if (g_currentFrame->return_value == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_UNSUPPORTED);
+    }
+    *g_currentFrame->return_value = static_cast<uint64_t>(value);
+    if (g_currentFrame->return_value_overridden != nullptr) {
+        *g_currentFrame->return_value_overridden = 1;
+    }
+    return static_cast<asBYTE>(SIGILHOOK_OK);
 }
 
 asQWORD scriptGetRegister(asBYTE reg) {
@@ -690,6 +711,17 @@ void contextSetArg(SHCallContext* context, asBYTE index, asQWORD value) {
     context->frame->arguments[index] = static_cast<uint64_t>(value);
 }
 
+asBYTE contextSetArgStatus(SHCallContext* context, asBYTE index, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    }
+    if (index >= context->frame->argument_count) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    }
+    context->frame->arguments[index] = static_cast<uint64_t>(value);
+    return static_cast<asBYTE>(SIGILHOOK_OK);
+}
+
 asQWORD contextReg(SHCallContext* context, asBYTE reg) {
     if (context == nullptr || context->frame == nullptr) return 0;
     uint64_t value = 0;
@@ -730,6 +762,20 @@ void contextSetReturn(SHCallContext* context, asQWORD value) {
     if (context->frame->return_value_overridden != nullptr) {
         *context->frame->return_value_overridden = 1;
     }
+}
+
+asBYTE contextSetReturnStatus(SHCallContext* context, asQWORD value) {
+    if (context == nullptr || context->frame == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_BUSY);
+    }
+    if (context->frame->return_value == nullptr) {
+        return static_cast<asBYTE>(SIGILHOOK_ERROR_UNSUPPORTED);
+    }
+    *context->frame->return_value = static_cast<uint64_t>(value);
+    if (context->frame->return_value_overridden != nullptr) {
+        *context->frame->return_value_overridden = 1;
+    }
+    return static_cast<asBYTE>(SIGILHOOK_OK);
 }
 
 asQWORD contextFlags(SHCallContext* context) {
@@ -1215,12 +1261,14 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterObjectType("SHCallContext", 0, asOBJ_REF | asOBJ_NOCOUNT);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getArg(uint8)", asFUNCTION(contextArg), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "void setArg(uint8, uint64)", asFUNCTION(contextSetArg), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint8 setArgStatus(uint8, uint64)", asFUNCTION(contextSetArgStatus), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getReg(uint8)", asFUNCTION(contextReg), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "bool setReg(uint8, uint64)", asFUNCTION(contextSetReg), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getXmm(uint8, uint8)", asFUNCTION(contextXmm), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "bool setXmm(uint8, uint8, uint64)", asFUNCTION(contextSetXmm), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getReturn()", asFUNCTION(contextReturn), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "void setReturn(uint64)", asFUNCTION(contextSetReturn), asCALL_CDECL_OBJFIRST);
+    engine->RegisterObjectMethod("SHCallContext", "uint8 setReturnStatus(uint64)", asFUNCTION(contextSetReturnStatus), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "uint64 getFlags()", asFUNCTION(contextFlags), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "bool setFlags(uint64)", asFUNCTION(contextSetFlags), asCALL_CDECL_OBJFIRST);
     engine->RegisterObjectMethod("SHCallContext", "void continueOriginal()", asFUNCTION(contextContinue), asCALL_CDECL_OBJFIRST);
@@ -1257,6 +1305,7 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 arg8(uint8)", asFUNCTION(scriptGetArg), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 arg(uint8)", asFUNCTION(scriptGetArgU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setArg(uint8, uint64)", asFUNCTION(scriptSetArgU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 setArgStatus(uint8, uint64)", asFUNCTION(scriptSetArgStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getRegister(uint8)", asFUNCTION(scriptGetRegister), asCALL_CDECL);
     engine->RegisterGlobalFunction("bool setRegister(uint8, uint64)", asFUNCTION(scriptSetRegister), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 getFlags()", asFUNCTION(scriptGetFlags), asCALL_CDECL);
@@ -1280,6 +1329,7 @@ void registerScriptApi(asIScriptEngine* engine) {
     engine->RegisterGlobalFunction("uint8 destroySnippetStatus(uint64)", asFUNCTION(scriptDestroySnippetStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("uint64 returnValue()", asFUNCTION(scriptGetReturnU64), asCALL_CDECL);
     engine->RegisterGlobalFunction("void setReturnValue(uint64)", asFUNCTION(scriptSetReturnU64), asCALL_CDECL);
+    engine->RegisterGlobalFunction("uint8 setReturnValueStatus(uint64)", asFUNCTION(scriptSetReturnStatus), asCALL_CDECL);
     engine->RegisterGlobalFunction("void callOriginal()", asFUNCTION(scriptCallOriginal), asCALL_CDECL);
     engine->RegisterGlobalFunction("void skipOriginal()", asFUNCTION(scriptSkipOriginal), asCALL_CDECL);
     engine->RegisterGlobalFunction("string statusString(uint8)", asFUNCTION(scriptStatusString), asCALL_CDECL);

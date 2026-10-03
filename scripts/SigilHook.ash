@@ -427,6 +427,10 @@ void shSetArg(uint8 index, uint64 value) {
     setArg(index, value);
 }
 
+uint8 shSetArgStatus(uint8 index, uint64 value) {
+    return setArgStatus(index, value);
+}
+
 void shSetArg8(uint8 index, uint8 value) {
     const uint64 current = arg(index);
     setArg(index, (current & ~uint64(0xff)) | uint64(value));
@@ -460,6 +464,10 @@ uint32 shReturn32() {
 
 void shSetReturn(uint64 value) {
     setReturnValue(value);
+}
+
+uint8 shSetReturnStatus(uint64 value) {
+    return setReturnValueStatus(value);
 }
 
 void shSetReturn8(uint8 value) {
