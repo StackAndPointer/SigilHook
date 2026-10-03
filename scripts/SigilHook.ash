@@ -227,7 +227,7 @@ bool shIsHooked(uint64 handle) {
 
 bool shContinueOriginal(uint64 handle) {
     if (!shSetInstructionPointer(shTrampoline(handle))) return false;
-    shSkipOriginal();
+    shKeepOriginal();
     return true;
 }
 
