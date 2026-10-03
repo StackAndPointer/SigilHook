@@ -184,7 +184,9 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
             endif()
             enable_testing()
             add_test(NAME SigilHookScriptSmokeTest COMMAND SigilHookScriptSmokeTest)
-            set_tests_properties(SigilHookScriptSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
+            set_tests_properties(SigilHookScriptSmokeTest PROPERTIES
+                WORKING_DIRECTORY $<TARGET_FILE_DIR:SigilHookScriptSmokeTest>
+                ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
 
             add_executable(SigilHookHotReloadSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookHotReloadSmokeTest/main.cpp
@@ -223,7 +225,9 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
                 target_link_libraries(SigilHookUsageExamplesCompileTest PRIVATE SigilHookDll asmjit)
             endif()
             add_test(NAME SigilHookUsageExamplesCompileTest COMMAND SigilHookUsageExamplesCompileTest)
-            set_tests_properties(SigilHookUsageExamplesCompileTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
+            set_tests_properties(SigilHookUsageExamplesCompileTest PROPERTIES
+                WORKING_DIRECTORY $<TARGET_FILE_DIR:SigilHookUsageExamplesCompileTest>
+                ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
             add_executable(SigilHookUsageSmokeTest
                 ${PROJECT_SOURCE_DIR}/Examples/SigilHookUsageSmokeTest/main.cpp
             )
@@ -244,7 +248,9 @@ if(WIN32 AND SIGILHOOK_FEATURE_ANGELSCRIPT)
                 endif()
             endif()
             add_test(NAME SigilHookUsageSmokeTest COMMAND SigilHookUsageSmokeTest)
-            set_tests_properties(SigilHookUsageSmokeTest PROPERTIES ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
+            set_tests_properties(SigilHookUsageSmokeTest PROPERTIES
+                WORKING_DIRECTORY $<TARGET_FILE_DIR:SigilHookUsageSmokeTest>
+                ENVIRONMENT "SIGILHOOK_DISABLE_AUTOLOAD=1")
         endif()
     endif()
 endif()

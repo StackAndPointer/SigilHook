@@ -108,6 +108,15 @@ jobs:
           -DSIGILHOOK_BUILD_INJECTOR_DLL=ON
           -DSIGILHOOK_BUILD_STATIC_RUNTIME=ON
 
+      - name: Configure MSVC core tests
+        if: ${{ matrix.compiler == 'msvc' }}
+        run: >
+          cmake -S . -B "${{ matrix.build_dir }}-core"
+          -G "${{ matrix.generator }}"
+          -A "${{ matrix.arch }}"
+          -DSIGILHOOK_BUILD_DLL=OFF
+          -DSIGILHOOK_BUILD_STATIC_RUNTIME=ON
+
       - name: Build GCC
         if: ${{ matrix.platform == 'gcc' }}
         run: cmake --build "${{ matrix.build_dir }}" --parallel
@@ -152,6 +161,10 @@ jobs:
           --parallel
           --target SigilHookDll SigilHookApiSmokeTest SigilHookScriptSmokeTest AngelScriptSmokeTest SigilHookHotReloadSmokeTest SigilHookUsageExamplesCompileTest SigilHookUsageSmokeTest
 
+      - name: Build MSVC core tests
+        if: ${{ matrix.compiler == 'msvc' }}
+        run: cmake --build "${{ matrix.build_dir }}-core" --config Release --parallel --target SigilHook
+
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}
         shell: pwsh
@@ -185,6 +198,10 @@ jobs:
       - name: Test Windows
         if: ${{ matrix.platform == 'windows' }}
         run: ctest --test-dir "${{ matrix.build_dir }}" -C Release --output-on-failure
+
+      - name: Test MSVC core tests
+        if: ${{ matrix.compiler == 'msvc' }}
+        run: ctest --test-dir "${{ matrix.build_dir }}-core" -C Release --output-on-failure
 
   release:
     name: Publish GitHub Release
