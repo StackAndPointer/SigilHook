@@ -22,6 +22,13 @@ void statusEntry() {
     shSetSharedU64Status("statusEntry", 1);
 }
 
+void statusSetArgOutsideCallback() {
+    if (shSetArgStatus(0, 1) != SH_ERROR_BUSY ||
+        shSetReturnStatus(1) != SH_ERROR_BUSY) {
+        shSetSharedU64("scriptBad", 3001);
+    }
+}
+
 void testStatusDetour() {
     uint64 detour = 0;
     uint64 trampoline = 0;
@@ -180,6 +187,8 @@ void testStatusAssemblyHelpers() {
 
 void verifyStatus() {
     shStatusString(SH_OK);
+    statusSetArgOutsideCallback();
+    if (shSharedU64("scriptBad") != 0) return;
     testStatusDetour();
     if (shSharedU64("scriptBad") != 0) return;
     testStatusHookKinds();

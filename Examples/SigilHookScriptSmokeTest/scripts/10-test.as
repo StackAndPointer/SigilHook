@@ -306,6 +306,8 @@ void onMid() {
 
 void onContinueOriginal() {
     g_helperStep = 1013;
+    if (shSetArgStatus(99, 1) != SH_ERROR_INVALID_ARGUMENT) { failHelperTest(); return; }
+    if (shSetReturnStatus(1) != SH_OK) { failHelperTest(); return; }
     if (!shContinueOriginal(g_continueHook)) { failHelperTest(); return; }
 }
 
@@ -318,6 +320,7 @@ void onContinuationCurrentContext() {
     g_helperStep = 1015;
     SHCallContext@ context = currentContext();
     if (context is null) { failHelperTest(); return; }
+    if (context.setArgStatus(99, 1) != SH_ERROR_INVALID_ARGUMENT) { failHelperTest(); return; }
     context.continueOriginal();
 }
 
