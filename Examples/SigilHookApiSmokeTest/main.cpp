@@ -699,6 +699,30 @@ int testStackArgumentRedirect() {
 }
 
 #if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+int testModuleReferenceLifecycle() {
+    uint64_t module = 0;
+    CHECK(sigilhook_module_load("NativeBindingTestDll.dll", &module) == SIGILHOOK_OK);
+    CHECK(module != 0);
+    uint64_t sameModule = 0;
+    CHECK(sigilhook_module_load("NativeBindingTestDll.dll", &sameModule) == SIGILHOOK_OK);
+    CHECK(sameModule == module);
+    CHECK(sigilhook_module_free(sameModule) == SIGILHOOK_OK);
+
+    uint64_t cachedAddress = 0;
+    CHECK(sigilhook_native_address(
+        "NativeBindingTestDll.dll", "SHNativeAdd", "cdecl", &cachedAddress) == SIGILHOOK_OK);
+    CHECK(cachedAddress != 0);
+    CHECK(sigilhook_native_address(
+        "NativeBindingTestDll.dll", "SHNativeAdd", "stdcall", &sameModule) == SIGILHOOK_OK);
+    CHECK(sigilhook_module_free(module) == SIGILHOOK_OK);
+    uint64_t reloadedAddress = 0;
+    CHECK(sigilhook_native_address(
+        "NativeBindingTestDll.dll", "SHNativeAdd", "cdecl", &reloadedAddress) == SIGILHOOK_OK);
+    CHECK(reloadedAddress == cachedAddress);
+    CHECK(sigilhook_modules_shutdown() == SIGILHOOK_OK);
+    return 0;
+}
+
 int testNativeBindingBlob() {
     uint64_t module = 0;
     CHECK(sigilhook_module_load("NativeBindingTestDll.dll", &module) == SIGILHOOK_OK);
@@ -818,6 +842,18 @@ int testNativeBindingBlob() {
     CHECK(usercallResult == usercallArgument);
     CHECK(g_pointerTargetCalls == 1);
 
+    const std::string malformedUsercallSignature = "ret=p,broken";
+    CHECK(sigilhook_invoke_native_blob(
+        usercallTarget, malformedUsercallSignature.c_str(), malformedUsercallSignature.c_str(),
+        usercallConvention, &usercallArgument, sizeof(usercallArgument),
+        &usercallResult, sizeof(usercallResult)) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    CHECK(sigilhook_invoke_native_blob(
+        usercallTarget, usercallSignature.c_str(), usercallSignature.c_str(),
+        usercallConvention, &usercallArgument, sizeof(usercallArgument),
+        &usercallResult, sizeof(usercallResult)) == SIGILHOOK_OK);
+    CHECK(usercallResult == usercallArgument);
+    CHECK(g_pointerTargetCalls == 2);
+
 #if defined(_WIN32)
     std::filesystem::path oppositePath = std::filesystem::current_path().parent_path();
 #if defined(_WIN64)
@@ -879,6 +915,7 @@ int main() {
     CHECK(testPointerUsercall() == 0);
     CHECK(testRuntimeReloadContract() == 0);
 #if defined(SIGILHOOK_NATIVE_BINDING_TEST)
+    CHECK(testModuleReferenceLifecycle() == 0);
     CHECK(testNativeBindingBlob() == 0);
 #endif
     return 0;

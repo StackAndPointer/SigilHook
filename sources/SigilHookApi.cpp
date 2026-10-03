@@ -551,11 +551,20 @@ sigilhook_status SIGILHOOK_CALL sigilhook_wait_for_trampolines(uint32_t timeoutM
             }
         }
         if (!pending) return SIGILHOOK_OK;
-        const auto waitFor = g_trampolines.front();
-        if (waitFor == nullptr) return SIGILHOOK_OK;
-        if (waitFor->drained.wait_until(lock, deadline) == std::cv_status::timeout) {
-            return SIGILHOOK_ERROR_BUSY;
+        bool waited = false;
+        for (auto& allocation : g_trampolines) {
+            if (allocation == nullptr ||
+                !allocation->retiring.load(std::memory_order_acquire) ||
+                allocation->inFlight.load(std::memory_order_acquire) == 0) {
+                continue;
+            }
+            waited = true;
+            if (allocation->drained.wait_until(lock, deadline) == std::cv_status::timeout) {
+                return SIGILHOOK_ERROR_BUSY;
+            }
+            break;
         }
+        if (!waited) return SIGILHOOK_OK;
     }
 }
 
