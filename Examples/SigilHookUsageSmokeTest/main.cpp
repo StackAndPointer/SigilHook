@@ -63,6 +63,10 @@ bool copyStandardHeader(const std::filesystem::path& directory) {
 }
 
 std::string mainSource() {
+    const bool isX64 = sigilhook_build_mode() == SIGILHOOK_MODE_X64;
+    const char* calledFunctionConvention = isX64
+        ? "usercall:arg0=rcx;ret=rax"
+        : "usercall:arg0=ecx;ret=eax";
     return
         "#include \"SigilHook.ash\"\n"
         "uint64 g_entryHook = SH_INVALID_HANDLE;\n"
@@ -80,7 +84,7 @@ std::string mainSource() {
         "    args[0] = 5;\n"
         "    uint64 result = 0;\n"
         "    const uint8 status = shCallUsercall(\n"
-        "        shSharedU64(\"calledFunction\"), \"int\", \"int\", \"usercall:arg0=rcx;ret=rax\",\n"
+        "        shSharedU64(\"calledFunction\"), \"int\", \"int\", \"" + std::string(calledFunctionConvention) + "\",\n"
         "        args, result);\n"
         "    if (status != SH_OK) shLog(\"usage called-function invocation failed\");\n"
         "}\n"
