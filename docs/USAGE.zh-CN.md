@@ -1,4 +1,4 @@
-# SigilHook 使用说明
+﻿# SigilHook 使用说明
 
 Copyright (c) 2026 StackAndPointer
 
@@ -209,6 +209,12 @@ string statusText = shStatusString(SH_OK);
 ```
 
 当前 C API 版本是 `0x0002000C`。
+
+调用 `sigilhook_invoke_native_blob()` 时，`return_blob` 至少要有
+`return_signature.returnValue.size` 字节。结构体返回值会先进入适配目标 ABI
+的临时缓冲区，再完整拷回 `return_blob`；缓冲区过小会返回
+`SIGILHOOK_ERROR_INVALID_ARGUMENT`。x86/x64 已覆盖 16 字节结构体和 5 字节
+packed 结构体返回。
 
 `sigilhook_invoke_usercall` 会按目标地址和签名缓存生成的调用桩。运行时停止时会自动清理该缓存；如果原生宿主持续使用 C ABI 而不停止运行时，应在这些目标不再使用时显式调用
 `sigilhook_clear_invoker_cache()`。

@@ -223,6 +223,12 @@ string statusText = shStatusString(SH_OK);
 
 The current C API version is `0x0002000C`.
 
+For `sigilhook_invoke_native_blob()`, `return_blob` must be at least
+`return_signature.returnValue.size` bytes. Record returns use a temporary
+buffer for the target ABI and are copied back into `return_blob` in full; a
+smaller buffer is rejected with `SIGILHOOK_ERROR_INVALID_ARGUMENT`. This is
+covered on x86 and x64 for 16-byte records and packed 5-byte records.
+
 `sigilhook_invoke_usercall` caches generated invoker stubs by target and
 signature. Runtime shutdown clears that cache. A native host that uses the C
 ABI without stopping the runtime should call

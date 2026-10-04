@@ -336,6 +336,12 @@ The public C interface is `include/sigilhook.h`. It exposes opaque handles and
 
 The current API version is `0x0002000C`. All addresses cross the ABI as `uint64_t`.
 
+For `sigilhook_invoke_native_blob()`, `return_blob` must be at least
+`return_signature.returnValue.size` bytes. Record returns use a temporary
+buffer for the target ABI and are copied back into `return_blob` in full; a
+smaller buffer is rejected with `SIGILHOOK_ERROR_INVALID_ARGUMENT`. This is
+covered on x86 and x64 for 16-byte records and packed 5-byte records.
+
 ## Building
 
 The repository workflow validates GCC x86/x64 on Linux and MSVC plus clang-cl
