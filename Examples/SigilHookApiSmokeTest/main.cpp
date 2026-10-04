@@ -808,6 +808,19 @@ int testNativeBindingBlob() {
     const char* record16Signature = "ret=r,16,8,0,16;args=r,16,8,0,16";
     CHECK(sigilhook_invoke_native_blob(echo16Address, record16Signature, record16Signature, "cdecl", &probe16, sizeof(probe16), &probe16Result, sizeof(probe16Result)) == SIGILHOOK_OK);
     CHECK(probe16Result.low == 56 && probe16Result.high == 82);
+    uint64_t exactRecordResult[2] = {};
+    struct ProbeS16Fresh { uint64_t low; uint64_t high; } fresh16{1, 2};
+    uint64_t undersizedRecordResult = 0;
+    CHECK(sigilhook_invoke_native_blob(
+        echo16Address, record16Signature, record16Signature, "cdecl",
+        &fresh16, sizeof(fresh16), &undersizedRecordResult,
+        sizeof(undersizedRecordResult)) == SIGILHOOK_ERROR_INVALID_ARGUMENT);
+    const sigilhook_status exactRecordStatus = sigilhook_invoke_native_blob(
+        echo16Address, record16Signature, record16Signature, "cdecl",
+        &fresh16, sizeof(fresh16), exactRecordResult,
+        sizeof(exactRecordResult));
+    CHECK(exactRecordStatus == SIGILHOOK_OK);
+    CHECK(exactRecordResult[0] == 17 && exactRecordResult[1] == 34);
     SHNativePacked5 probePacked{2, 100}, probePackedResult{};
     uint64_t packedAddress = 0;
     CHECK(sigilhook_native_address("NativeBindingTestDll.dll", "SHNativeEchoPacked", "cdecl", &packedAddress) == SIGILHOOK_OK);

@@ -1493,9 +1493,11 @@ bool buildNativeInvoker(const NativeSignature& signature, const std::string& con
     else if (normalized == "vectorcall" || normalized == "__vectorcall") callConv = asmjit::CallConvId::kVectorCall;
     else if (!normalized.empty() && normalized != "cdecl" && normalized != "__cdecl") return false;
 
+    const bool recordByReference = currentMode() == SIGILHOOK::Mode::x64 &&
+        !nativeRecordRegisterSize(signature.returnValue.width);
     const bool hiddenReturn = signature.returnValue.kind == 'r' &&
         (currentMode() == SIGILHOOK::Mode::x64
-            ? !nativeRecordRegisterSize(signature.returnValue.width)
+            ? recordByReference
             : signature.returnValue.width > 4 && signature.returnValue.width != 8);
     const asmjit::TypeId returnTypeId = hiddenReturn || signature.returnValue.kind == 'v'
         ? asmjit::TypeId::kVoid : nativeTypeId(signature.returnValue);
@@ -1545,6 +1547,10 @@ bool buildNativeInvoker(const NativeSignature& signature, const std::string& con
     asmjit::x86::Compiler compiler(&code);
     asmjit::x86::Gp argumentBase = compiler.newUIntPtr("argumentBase");
     asmjit::x86::Gp returnBase = compiler.newUIntPtr("returnBase");
+    asmjit::x86::Mem hiddenReturnBuffer;
+    if (hiddenReturn) {
+        hiddenReturnBuffer = compiler.newStack(signature.returnValue.width, 8);
+    }
     asmjit::FuncNode* function = compiler.addFunc(asmjit::FuncSignature::build<void, const void*, void*>());
     function->setArg(0, argumentBase);
     function->setArg(1, returnBase);
@@ -1554,7 +1560,7 @@ bool buildNativeInvoker(const NativeSignature& signature, const std::string& con
     for (const NativeTargetArg& plan : plans) {
         if (plan.hiddenReturn) {
             asmjit::x86::Gp pointer = compiler.newUIntPtr();
-            compiler.mov(pointer, returnBase);
+            compiler.lea(pointer, hiddenReturnBuffer);
             preparedArgs.push_back(pointer);
             continue;
         }
@@ -1577,6 +1583,14 @@ bool buildNativeInvoker(const NativeSignature& signature, const std::string& con
     asmjit::InvokeNode* invocation = nullptr;
     if (compiler.invoke(&invocation, asmjit::Imm(static_cast<int64_t>(target)), targetSignature) != asmjit::kErrorOk) return false;
     for (size_t index = 0; index < preparedArgs.size(); ++index) invocation->setArg(index, preparedArgs[index]);
+
+    if (hiddenReturn) {
+        for (uint32_t offset = 0; offset < signature.returnValue.width; ++offset) {
+            asmjit::x86::Gp value = compiler.newGp(asmjit::TypeId::kUInt8);
+            compiler.movzx(value, hiddenReturnBuffer.cloneAdjusted(offset).cloneResized(1));
+            compiler.mov(asmjit::x86::ptr(returnBase, static_cast<int32_t>(offset)).cloneResized(1), value);
+        }
+    }
 
     if (!hiddenReturn && signature.returnValue.kind != 'v' && signature.returnValue.width != 0 && invocation->hasRet()) {
         const size_t count = invocation->detail().retPack().count();
@@ -1987,7 +2001,9 @@ sigilhook_status SIGILHOOK_CALL sigilhook_invoke_native_blob(
         if (existing != g_nativeInvokers.end()) invoker = reinterpret_cast<uint64_t>(existing->second.allocation);
     }
     if (invoker == 0) {
-        if (!buildNativeInvoker(signature, convention, target, &invoker)) return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Native signature cannot be generated for this ABI");
+        if (!buildNativeInvoker(signature, convention, target, &invoker)) {
+            return fail(SIGILHOOK_ERROR_UNSUPPORTED, "Native signature cannot be generated for this ABI");
+        }
         record.allocation = reinterpret_cast<void*>(static_cast<uintptr_t>(invoker));
         record.size = 0;
         std::lock_guard lock(g_nativeInvokerMutex);
