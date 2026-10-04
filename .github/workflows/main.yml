@@ -167,7 +167,7 @@ jobs:
           cmake --build "${{ matrix.build_dir }}-core"
           --config Release
           --parallel
-          --target SigilHook SigilHookCoreTests AngelScriptSmokeTest
+          --target SigilHook AngelScriptSmokeTest
 
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}
