@@ -163,7 +163,11 @@ jobs:
 
       - name: Build MSVC core tests
         if: ${{ matrix.compiler == 'msvc' }}
-        run: cmake --build "${{ matrix.build_dir }}-core" --config Release --parallel --target SigilHook
+        run: >
+          cmake --build "${{ matrix.build_dir }}-core"
+          --config Release
+          --parallel
+          --target SigilHook SigilHookCoreTests AngelScriptSmokeTest
 
       - name: Package Windows DLL
         if: ${{ matrix.platform == 'windows' }}
@@ -201,7 +205,7 @@ jobs:
 
       - name: Test MSVC core tests
         if: ${{ matrix.compiler == 'msvc' }}
-        run: ctest --test-dir "${{ matrix.build_dir }}-core" -C Release --output-on-failure
+        run: ctest --test-dir "${{ matrix.build_dir }}-core" -C Release --output-on-failure -R "^(SigilHookCoreTests|AngelScriptSmokeTest)$"
 
   release:
     name: Publish GitHub Release
