@@ -83,6 +83,22 @@ Use `stack+offset` only when the target really reads an argument from the
 stack. The offset is measured from the function-entry stack pointer and
 includes the return address, as documented in the standard library header.
 
+## Multi-file headers
+
+The runtime expands each `.ash` path once automatically, even when multiple `.as` sections include it. Use `#pragma once` for editor/tool compatibility, not as a required guard. Namespace public APIs and keep implementation helpers in a per-header private namespace:
+
+```angelscript
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 flags) { return int(flags & 7); }
+#pragma sigilhook endprivate
+```
+
+`export` is a documentation marker, not access control. See the full usage guide for directive constraints.
+
 ## Engineering deployment checklist
 
 Before loading these scripts into a production process:

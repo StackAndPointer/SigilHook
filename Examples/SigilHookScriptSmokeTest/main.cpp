@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 StackAndPointer
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "sigilhook.h"
 
@@ -737,6 +737,45 @@ void unload() {
     CHECK(failureCallbackCalls == 1);
     CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
     CHECK(sigilhook_runtime_last_callback_status(nullptr, 0) == SIGILHOOK_OK);
+
+    const auto multiFile = negativeRoot / "multi-file-boundaries";
+    CHECK(copyStandardHeader(multiFile));
+    CHECK(writeScriptFile(multiFile / "include" / "PublicApi.ash", R"SIGIL(
+#pragma once
+#pragma sigilhook namespace Game::Player
+export int value() { return 7; }
+#pragma sigilhook endnamespace
+#pragma sigilhook private
+int helper() { return 11; }
+#pragma sigilhook endprivate
+)SIGIL" ));
+    CHECK(writeScriptFile(multiFile / "main.as", R"SIGIL(
+#include "SigilHook.ash"
+#include "include/PublicApi.ash"
+#include "include/PublicApi.ash"
+void main() { shSetSharedU64("boundaryValue", Game::Player::value()); }
+void unload() {}
+)SIGIL" ));
+    CHECK(writeScriptFile(multiFile / "feature.as", R"SIGIL(
+#include "SigilHook.ash"
+#include "include/PublicApi.ash"
+int helper() { return 23; }
+uint64 featureValue() { return Game::Player::value() + helper(); }
+)SIGIL" ));
+    CHECK(sigilhook_runtime_start(multiFile.wstring().c_str()) == SIGILHOOK_OK);
+    CHECK(sigilhook_runtime_load_directory(multiFile.wstring().c_str()) == SIGILHOOK_OK);
+    uint64_t boundaryValue = 0;
+    CHECK(sigilhook_runtime_get_shared_u64("boundaryValue", &boundaryValue) == SIGILHOOK_OK);
+    CHECK(boundaryValue == 7);
+    CHECK(sigilhook_runtime_stop() == SIGILHOOK_OK);
+
+    const auto unclosedPrivate = negativeRoot / "unclosed-private";
+    CHECK(copyStandardHeader(unclosedPrivate));
+    CHECK(writeScriptFile(unclosedPrivate / "include" / "Broken.ash",
+        "#pragma sigilhook private\nint hidden() { return 1; }\n"));
+    CHECK(writeScriptFile(unclosedPrivate / "main.as",
+        "#include \"SigilHook.ash\"\n#include \"include/Broken.ash\"\nvoid main() {}\nvoid unload() {}\n"));
+    CHECK(expectScriptLoadFailure(unclosedPrivate, "missing #pragma sigilhook endprivate"));
 
     const auto missingMain = negativeRoot / "missing-main";
     CHECK(writeScriptFile(missingMain / "legacy.as", "void legacy() {}\n"));

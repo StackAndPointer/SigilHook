@@ -1,4 +1,4 @@
-﻿# SigilHook Usage Guide
+# SigilHook Usage Guide
 
 Copyright (c) 2026 StackAndPointer
 
@@ -198,7 +198,23 @@ Headers are resolved relative to the including file first, then relative to the 
 #include <include/shared.ash>
 ```
 
-The loader removes an optional `#pragma once`. Every normalized header path is expanded once for the application, so repeated includes are safe without protection macros. Include lines are replaced with blank lines, preserving line numbers in errors. Missing files, invalid directives, cycles, and include depth over 16 are reported with the include chain. The loader does not implement `#ifndef`, `#define`, or a complete C preprocessor.
+The loader automatically guards every normalized `.ash` path: each header is expanded at most once per application, even when several `.as` files include it. `#pragma once` is accepted for portability but is not required. Cycles are still errors rather than being silently suppressed. Include lines are replaced with blank lines, preserving source line numbers. Missing files, invalid directives, cycles, and include depth over 16 are reported with the include chain. The loader does not implement `#ifndef`, `#define`, or a complete C preprocessor.
+
+Use AngelScript namespaces to avoid global symbol collisions. A header can declare a public API namespace and explicitly mark exported declarations for readers and tooling:
+
+```angelscript
+// include/PlayerApi.ash
+#pragma once
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 rawFlags) { return int(rawFlags & 7); }
+#pragma sigilhook endprivate
+```
+
+`namespace`/`endnamespace` create a normal AngelScript namespace. `private`/`endprivate` wrap implementation declarations in a deterministic namespace derived from the header path, so private helpers in different headers do not collide. Keep includes outside these blocks. `export` is a documentation/validation marker that is stripped before compilation; it is not an access-control keyword. AngelScript does not provide per-function private visibility, so do not call private helpers outside their generated namespace. These SigilHook directives are valid only in `.ash` files and must be balanced within the same file.
 
 A normal `.as` file should be compiled directly as an application section; include only `.ash` files.
 

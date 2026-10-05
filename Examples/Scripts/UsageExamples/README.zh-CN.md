@@ -76,6 +76,22 @@ shHookUsercall(0x00415D40, "void onUpdate()", "void:void*",
 只有目标函数确实从栈读取参数时才使用 `stack+offset`。偏移从函数入口的栈指针
 开始计算，并包含返回地址；具体语义见标准头文件。
 
+## 多文件头文件
+
+运行时会自动按 `.ash` 路径去重，即使多个 `.as` section 重复包含同一头文件也只展开一次。`#pragma once` 可用于编辑器和工具兼容，但不是必需的保护宏。公共 API 使用 namespace，私有实现 helper 使用每个头文件独立的私有 namespace：
+
+```angelscript
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 flags) { return int(flags & 7); }
+#pragma sigilhook endprivate
+```
+
+`export` 是文档标记，不提供访问控制。pragma 限制见完整使用指南。
+
 ## 运行示例
 
 编译检查会在构建期间验证示例。要执行真实目标，请复制这个目录，替换占位地址，

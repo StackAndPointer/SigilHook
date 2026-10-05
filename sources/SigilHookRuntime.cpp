@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 StackAndPointer
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include "include/sigilhook.h"
 
@@ -18,6 +18,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -116,6 +117,17 @@ struct IncludeLoadState {
     std::string error;
 };
 
+std::string privateNamespaceFor(const fs::path& path) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (const unsigned char character : path.generic_string()) {
+        hash ^= character;
+        hash *= UINT64_C(1099511628211);
+    }
+    std::ostringstream name;
+    name << "__sigilhook_private_" << std::hex << hash;
+    return name.str();
+}
+
 enum class SourceLineKind {
     ordinary,
     include,
@@ -174,6 +186,15 @@ bool startsWithKeyword(const std::string& line, const char* keyword) {
     if (position == line.size()) return true;
     const unsigned char next = static_cast<unsigned char>(line[position]);
     return !(std::isalnum(next) || next == '_');
+}
+
+bool parseSigilHookPragma(const std::string& stripped, std::string& directive) {
+    if (!startsWithKeyword(stripped, "pragma")) return false;
+    const std::string value = trim(stripped.substr(7));
+    constexpr std::string_view prefix = "sigilhook";
+    if (value.size() < prefix.size() || value.compare(0, prefix.size(), prefix) != 0) return false;
+    directive = trim(value.substr(prefix.size()));
+    return true;
 }
 
 SourceLineKind classifySourceLine(const std::string& stripped, std::string& includeTarget) {
@@ -236,13 +257,99 @@ bool processScriptFile(
     }
 
     state.stack.push_back(path);
+    bool namespaceOpen = false;
+    bool privateOpen = false;
+    const std::string privateNamespace = privateNamespaceFor(path);
     std::string line;
     int lineNumber = 0;
     while (std::getline(input, line)) {
         ++lineNumber;
         const std::string stripped = trim(line);
+        std::string pragma;
         if (startsWithKeyword(stripped, "pragma") &&
             trim(stripped.substr(7)) == "once") {
+            output.push_back('\n');
+            continue;
+        }
+        if (parseSigilHookPragma(stripped, pragma)) {
+            if (!isHeader) {
+                setIncludeError(state, path, lineNumber, "sigilhook namespace/private directives are only valid in .ash files");
+                state.stack.pop_back();
+                return false;
+            }
+            if (pragma == "private") {
+                if (privateOpen || namespaceOpen) {
+                    setIncludeError(state, path, lineNumber, "private block cannot be nested");
+                    state.stack.pop_back();
+                    return false;
+                }
+                output += "namespace " + privateNamespace + " {\n";
+                privateOpen = true;
+            } else if (pragma == "endprivate") {
+                if (!privateOpen) {
+                    setIncludeError(state, path, lineNumber, "endprivate without private");
+                    state.stack.pop_back();
+                    return false;
+                }
+                output += "}\n";
+                privateOpen = false;
+            } else if (pragma.rfind("namespace ", 0) == 0) {
+                const std::string name = trim(pragma.substr(10));
+                bool validName = !name.empty();
+                bool expectIdentifier = true;
+                for (size_t index = 0; index < name.size();) {
+                    const unsigned char character = static_cast<unsigned char>(name[index]);
+                    if (expectIdentifier) {
+                        if (!(std::isalpha(character) || character == '_')) {
+                            validName = false;
+                            break;
+                        }
+                        ++index;
+                        while (index < name.size()) {
+                            const unsigned char next = static_cast<unsigned char>(name[index]);
+                            if (!(std::isalnum(next) || next == '_')) break;
+                            ++index;
+                        }
+                        expectIdentifier = false;
+                    } else if (index + 1 < name.size() && name[index] == ':' && name[index + 1] == ':') {
+                        index += 2;
+                        expectIdentifier = true;
+                    } else {
+                        validName = false;
+                        break;
+                    }
+                }
+                if (!validName || expectIdentifier || privateOpen || namespaceOpen) {
+                    setIncludeError(state, path, lineNumber, "invalid or nested sigilhook namespace");
+                    state.stack.pop_back();
+                    return false;
+                }
+                output += "namespace " + name + " {\n";
+                namespaceOpen = true;
+            } else if (pragma == "endnamespace") {
+                if (!namespaceOpen) {
+                    setIncludeError(state, path, lineNumber, "endnamespace without namespace");
+                    state.stack.pop_back();
+                    return false;
+                }
+                output += "}\n";
+                namespaceOpen = false;
+            } else {
+                setIncludeError(state, path, lineNumber, "unknown sigilhook pragma: " + pragma);
+                state.stack.pop_back();
+                return false;
+            }
+            continue;
+        }
+
+        if (stripped.rfind("export ", 0) == 0) {
+            const std::string declaration = trim(stripped.substr(7));
+            if (!isHeader || declaration.empty() || privateOpen || !namespaceOpen) {
+                setIncludeError(state, path, lineNumber, "export requires a declaration outside a private block");
+                state.stack.pop_back();
+                return false;
+            }
+            output.append(declaration);
             output.push_back('\n');
             continue;
         }
@@ -251,6 +358,11 @@ bool processScriptFile(
         const SourceLineKind kind = classifySourceLine(stripped, includeTarget);
         if (kind == SourceLineKind::invalidInclude) {
             setIncludeError(state, path, lineNumber, "invalid include directive");
+            state.stack.pop_back();
+            return false;
+        }
+        if (kind == SourceLineKind::include && (privateOpen || namespaceOpen)) {
+            setIncludeError(state, path, lineNumber, "include directives must be outside sigilhook namespace/private blocks");
             state.stack.pop_back();
             return false;
         }
@@ -290,6 +402,13 @@ bool processScriptFile(
         state.includedHeaders.insert(includePath.generic_string());
     }
 
+    if (privateOpen || namespaceOpen) {
+        setIncludeError(state, path, lineNumber, privateOpen
+            ? "private block is missing #pragma sigilhook endprivate"
+            : "namespace is missing #pragma sigilhook endnamespace");
+        state.stack.pop_back();
+        return false;
+    }
     state.stack.pop_back();
     if (isHeader) state.includedHeaders.insert(key);
     return true;

@@ -1,4 +1,4 @@
-﻿# SigilHook 使用说明
+# SigilHook 使用说明
 
 Copyright (c) 2026 StackAndPointer
 
@@ -185,7 +185,23 @@ void unload() {
 #include <include/shared.ash>
 ```
 
-加载器会移除可选的 `#pragma once`。每个规范化后的头文件路径在应用内只展开一次，因此重复包含不需要保护宏。包含行会替换成空行，保留原 `.as` 文件行号。缺失文件、非法指令、循环包含和超过 16 层的包含深度都会带包含链报告。加载器不实现 `#ifndef`、`#define` 或完整 C 预处理器。
+加载器会自动保护每个规范化后的 `.ash` 路径：即使多个 `.as` 文件包含同一个头文件，每个应用中也最多展开一次。`#pragma once` 可保留以方便移植，但不是必需的。循环依赖仍会作为错误报告，不会被静默吞掉。包含行会替换为空行以保留源行号。缺失文件、非法指令、循环包含和超过 16 层的包含深度都会带包含链报告。加载器不实现 `#ifndef`、`#define` 或完整 C 预处理器。
+
+使用 AngelScript namespace 避免全局符号冲突。头文件可以定义公共 API namespace，并用 `export` 标记供使用者和工具识别的声明：
+
+```angelscript
+// include/PlayerApi.ash
+#pragma once
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 rawFlags) { return int(rawFlags & 7); }
+#pragma sigilhook endprivate
+```
+
+`namespace`/`endnamespace` 会生成普通 AngelScript namespace。`private`/`endprivate` 会把实现声明包进根据头文件路径确定的唯一 namespace，避免不同头文件中的私有 helper 冲突。include 应放在这些块之外。`export` 是文档和校验标记，预处理时会移除；它不是访问控制关键字。AngelScript 不提供函数级 private，因此不要在生成的私有 namespace 外调用私有 helper。SigilHook pragma 仅能用于 `.ash`，且必须在同一文件内成对闭合。
 
 普通 `.as` 文件应作为应用 section 直接编译，只包含 `.ash` 文件。
 
