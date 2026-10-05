@@ -1,4 +1,4 @@
-﻿# SigilHook
+# SigilHook
 
 Copyright (c) 2026 StackAndPointer
 
@@ -24,8 +24,9 @@ This section summarizes the deliberate additions on top of the two upstream proj
 
 ### Extensions over AngelScript
 
-- The whole script directory is compiled into a single `SigilHook.Application` module, with every `.as` file added as a section. Split `.as` files can call each other's global functions and read or write shared globals directly, without `import` or `export`, so the authoring experience stays close to a normal C/C++ project.
-- `.ash` header semantics were added: `#include "..."` and `#include <...>` are resolved relative to the including file and then the script root, normalized absolute paths detect cycles, and each header expands once per application without a protection macro. An optional `#pragma once` is recognized and removed. This is not a full C preprocessor; `#ifndef`/`#define` are not implemented.
+- The whole script directory is compiled into a single `SigilHook.Application` module, with every `.as` file added as a section. Split `.as` files can call each other's global functions and read or write shared globals directly; native AngelScript modules remain separate and use AngelScript's import/bind model.
+- `.ash` headers are automatically guarded by normalized file path and expanded at most once per application, even when included from multiple `.as` sections. `#pragma once` is optional; cycles remain explicit errors. The loader does not implement a full C preprocessor such as `#ifndef`/`#define`.
+- Multi-file script APIs can use AngelScript namespaces to prevent global symbol collisions. `.ash` files may use `#pragma sigilhook namespace Name` / `endnamespace` for public namespaces and `private` / `endprivate` to put implementation helpers in a stable per-header namespace. `export` is an explicit API documentation marker, not an access-control keyword; includes must stay outside these balanced header blocks. See the usage guide for the exact rules and examples.
 - A strict single entry point is enforced: only the root `main.as` may provide `void main()` and the optional `void unload()`. A missing `main.as`, a missing `main()`, an entry point in another file, or duplicate entries all return `SIGILHOOK_ERROR_SCRIPT` with a clear log, so test scripts in the same directory cannot be mistaken for entry points.
 - A complete AngelScript binding layer was added: core hooks, detours, breakpoints, IAT/EAT, VFunc/VTable, memory, registers, XMM, flags, calling conventions, `usercall`, JIT, script entry invocation, shared values, logging, and error codes are registered as script objects or global functions. `scripts/SigilHook.ash` is the single script-facing surface.
 - A bundled `.ash` standard library, `scripts/SigilHook.ash`, was added: constants, enums, convenience wrappers, status-preserving `sh...Status` variants, register/XMM/flag access, memory and scanning, assembly and disassembly, and DLL call wrappers.
@@ -56,14 +57,28 @@ Place scripts in:
 
 The root script directory must contain `main.as`. Other `.as` files may be organized in subdirectories.
 
-AngelScript source files use `.as`. Script headers use `.ash`; they are not C/C++ headers. Every `.as` file is added as a section of one `SigilHook.Application` module, so global functions and variables can call and modify each other directly without `import` or `export`. The loader recursively collects source files in deterministic path order and requires the root entry file:
+AngelScript source files use `.as`. Script headers use `.ash`; they are not C/C++ headers. Every `.as` file is added as a section of one `SigilHook.Application` module, so global functions and variables can call and modify each other directly. Use namespaces to make shared APIs explicit and keep implementation helpers out of the global symbol scope:
+
+```angelscript
+// include/PlayerApi.ash
+#pragma once
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 flags) { return int(flags & 7); }
+#pragma sigilhook endprivate
+```
+
+`export` is stripped before AngelScript compilation and is not access control. `private` declarations live in a deterministic namespace derived from their header path; AngelScript has no function-level private visibility. The loader recursively collects source files in deterministic path order and requires the root entry file:
 
 ```text
 <SigilHook.dll directory>\SigilHook\main.as
 <SigilHook.dll directory>\SigilHook\include\*.ash
 ```
 
-Headers are included with `#include "helpers.ash"` or `#include <helpers.ash>`, resolved relative to the including file and then the script root. Each normalized header path is expanded once for the whole application, so repeated includes are safe without a protection macro. `#pragma once` is accepted and removed. Nested includes, missing files, invalid paths, cycles, and depth over 16 are reported with the include chain. This loader does not implement `#ifndef/#define` or a full C preprocessor.
+Headers are included with `#include "helpers.ash"` or `#include <helpers.ash>`, resolved relative to the including file and then the script root. Each normalized header path is expanded once for the whole application, so repeated includes are safe without a protection macro. `#pragma once` is optional. Nested includes, missing files, invalid paths, cycles, and depth over 16 are reported with the include chain. SigilHook namespace/private directives are limited to balanced blocks in `.ash` files, with includes outside those blocks. This loader does not implement `#ifndef/#define` or a full C preprocessor.
 
 Copy [`scripts/SigilHook.ash`](scripts/SigilHook.ash) into the script directory and include it from any source file to use the standard helper API.
 

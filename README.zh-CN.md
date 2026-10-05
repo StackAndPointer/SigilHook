@@ -22,8 +22,9 @@ SigilHook 是一个基于 PolyHook 2、由 AngelScript 驱动的 x86/x64 Hook �
 
 ### 在 AngelScript 基础上的拓展
 
-- 整个脚本目录被编译成一个 `SigilHook.Application` 模块，每个 `.as` 文件作为该模块的一个 section。拆分的 `.as` 文件之间可以直接互调全局函数、直接读写共享全局变量，不需要 `import` 或 `export`，编写体验接近普通 C/C++ 项目。
-- 增加了 `.ash` 头文件语义：`#include "..."` 和 `#include <...>` 会先相对当前文件解析，再相对脚本根目录解析；用规范化绝对路径做循环检测；同一个头文件在一个应用内只展开一次，不要求护宏；可选的 `#pragma once` 会被识别并移除。这不是完整的 C 预处理器，`#ifndef`/`#define` 不支持。
+- 整个脚本目录被编译成一个 `SigilHook.Application` 模块，每个 `.as` 文件作为该模块的一个 section。拆分的 `.as` 文件之间可以直接互调全局函数、直接读写共享全局变量；原生 AngelScript 多模块仍按 AngelScript 的 import/bind 模型隔离。
+- `.ash` 头文件按规范化路径自动做 include 保护：即使多个 `.as` section 重复包含，同一头文件在一个应用内也只展开一次。`#pragma once` 可选；循环 include 仍然是明确报错。加载器不是完整的 C 预处理器，`#ifndef`/`#define` 不支持。
+- 增加了多文件脚本的符号边界：可以用 AngelScript namespace 避免全局符号冲突。`.ash` 中可用 `#pragma sigilhook namespace Name` / `endnamespace` 声明公共 namespace，用 `private` / `endprivate` 把实现 helper 放进按头文件路径稳定生成的 namespace。`export` 是显式的 API 文档标记，不是访问控制关键字；include 必须放在这些成对闭合的块之外。
 - 强制严格单入口：只允许根目录 `main.as` 提供 `void main()` 和可选的 `void unload()`。缺少 `main.as`、缺少 `main()`、入口写在其他文件、入口重复，都会返回 `SIGILHOOK_ERROR_SCRIPT` 并写入清晰日志，避免同目录下的测试脚本被误认为入口。
 - 增加了完整的 AngelScript 绑定层：核心 Hook、Detour、Breakpoint、IAT/EAT、VFunc/VTable、内存、寄存器、XMM、flags、调用约定、`usercall`、JIT、脚本入口调用、共享值、日志和错误码，都注册为脚本对象或全局函数。`scripts/SigilHook.ash` 是唯一的脚本侧接口面。
 - 增加了随项目提供的 `.ash` 标准库 `scripts/SigilHook.ash`：常量、枚举、便捷包装、保留状态的 `sh...Status` 版本、寄存器/XMM/flags 访问、内存与扫描、汇编与反汇编，以及 DLL 调用包装。
@@ -56,14 +57,28 @@ SigilHook 是一个基于 PolyHook 2、由 AngelScript 驱动的 x86/x64 Hook �
 
 根脚本目录必须包含 `main.as`。其他 `.as` 文件可以放在子目录中。
 
-AngelScript 源文件使用 `.as`，脚本头文件使用 `.ash`；`.ash` 不是 C/C++ 头文件。每个 `.as` 文件都会被加入同一个 `SigilHook.Application` 模块，因此全局函数和变量之间可以直接调用、直接修改，不需要 `import` 或 `export`。加载器按确定的路径顺序递归收集源文件，并要求根入口文件：
+AngelScript 源文件使用 `.as`，脚本头文件使用 `.ash`；`.ash` 不是 C/C++ 头文件。每个 `.as` 文件都会被加入同一个 `SigilHook.Application` 模块，因此全局函数和变量之间可以直接调用、直接修改。多文件共享 API 建议用 namespace 显式划分，并把实现 helper 移出全局符号空间：
+
+```angelscript
+// include/PlayerApi.ash
+#pragma once
+#pragma sigilhook namespace Game::Player
+export int health(uint64 entity);
+#pragma sigilhook endnamespace
+
+#pragma sigilhook private
+int decodeFlags(uint64 flags) { return int(flags & 7); }
+#pragma sigilhook endprivate
+```
+
+`export` 在 AngelScript 编译前被移除，并不提供访问控制；`private` 声明位于按头文件路径确定的 namespace 中，AngelScript 本身没有函数级 private。加载器按确定的路径顺序递归收集源文件，并要求根入口文件：
 
 ```text
 <SigilHook.dll directory>\SigilHook\main.as
 <SigilHook.dll directory>\SigilHook\include\*.ash
 ```
 
-头文件通过 `#include "helpers.ash"` 或 `#include <helpers.ash>` 引入，先相对当前文件解析，再相对脚本根目录解析。每个规范化后的头文件路径在整个应用中只展开一次，所以重复 include 是安全的，不需要护宏。`#pragma once` 会被接受并移除。嵌套 include、缺失文件、非法路径、循环 include 和超过 16 层的深度都会连同 include 链一起报错。加载器不实现 `#ifndef/#define` 或完整的 C 预处理器。
+头文件通过 `#include "helpers.ash"` 或 `#include <helpers.ash>` 引入，先相对当前文件解析，再相对脚本根目录解析。每个规范化后的头文件路径在整个应用中只展开一次，所以重复 include 是安全的，不需要护宏；`#pragma once` 可选。嵌套 include、缺失文件、非法路径、循环 include 和超过 16 层的深度都会连同 include 链一起报错。SigilHook 的 namespace/private 指令只能写在 `.ash` 中成对闭合的块里，include 必须放在这些块之外。加载器不实现 `#ifndef/#define` 或完整的 C 预处理器。
 
 把 [`scripts/SigilHook.ash`](scripts/SigilHook.ash) 复制到脚本目录，并在任意源文件中 include，即可使用标准辅助 API。
 
