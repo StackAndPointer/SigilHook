@@ -83,11 +83,19 @@ Use `stack+offset` only when the target really reads an argument from the
 stack. The offset is measured from the function-entry stack pointer and
 includes the return address, as documented in the standard library header.
 
-## Running the examples
+## Engineering deployment checklist
 
-The compile check validates the examples during a build. To execute a real
-target, copy this directory, replace the placeholder addresses, and load the
-result as the runtime script directory:
+Before loading these scripts into a production process:
+
+1. Identify each target address from the exact binary build and verify its calling convention.
+2. Replace every placeholder address and update the signature and register/stack mapping together.
+3. Prefer generated bindings for exported APIs; use `shNativeAddress()` plus `shInvokeNativeBlob()` only when a typed wrapper cannot express the ABI.
+4. Keep hook handles in one owner, remove them in `unload()`, and treat `SH_ERROR_BUSY` as a retry condition during stop or reload.
+5. Use `shSetArgStatus()`, `shSetReturnStatus()`, and the `SHCallContext` status APIs when a callback must distinguish an invalid frame from a valid zero value.
+6. Gate x64-only registers, XMM registers, and pointer-width signatures with `shIsX64()`/`shPointerSize()`.
+7. Test the script against the target process with logging enabled before enabling hot reload.
+
+The compile check validates the examples during a build, but it intentionally does not execute placeholder hooks. To execute a real target, copy this directory, replace the placeholder addresses, and load the result as the runtime script directory:
 
 ```text
 <SigilHook.dll directory>\SigilHook\main.as

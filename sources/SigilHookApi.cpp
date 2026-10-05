@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 StackAndPointer
+// Copyright (c) 2026 StackAndPointer
 // SPDX-License-Identifier: MIT
 #include <filesystem>
 #include "include/sigilhook.h"
@@ -782,8 +782,10 @@ sigilhook_status SIGILHOOK_CALL sigilhook_destroy(sigilhook_handle handle) {
     }
     if (record && record->trampolineAllocation) {
         record->trampolineAllocation->retiring.store(true, std::memory_order_release);
+        // Keep the registry's shared ownership until wait_for_trampolines
+        // observes that all generated stubs have exited. The callback stores
+        // only a raw user-data pointer.
         freeTrampolineIfRetired(record->trampolineAllocation);
-        unregisterTrampoline(record->trampolineAllocation);
     }
     {
         std::lock_guard lock(g_registryMutex);

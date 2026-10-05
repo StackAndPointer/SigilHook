@@ -63,8 +63,15 @@ int main() {
     const sigilhook_status loadStatus = sigilhook_runtime_load_directory(wide.c_str());
     if (loadStatus != SIGILHOOK_OK) {
         std::cerr << "usage examples failed to compile: " << static_cast<int>(loadStatus) << '\n';
+        sigilhook_runtime_stop();
         std::filesystem::remove_all(directory, error);
         return 2;
+    }
+    const sigilhook_status stopStatus = sigilhook_runtime_stop();
+    if (stopStatus != SIGILHOOK_OK) {
+        std::cerr << "usage examples runtime stop failed: " << static_cast<int>(stopStatus) << '\n';
+        std::filesystem::remove_all(directory, error);
+        return 3;
     }
     std::cout << "usage examples compiled\n";
     std::filesystem::remove_all(directory, error);

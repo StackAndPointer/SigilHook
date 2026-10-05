@@ -75,10 +75,14 @@ __declspec(noinline) int SIGILHOOK_CALL stackRedirectTarget(int a, int b, int c,
 }
 
 __declspec(noinline) int SIGILHOOK_CALL codeTarget(int value) {
-    volatile int result = value;
-    for (int index = 0; index < 19; ++index) result += (index & 1);
+    // Keep the fixture prologue long and branch-free so CodeDetour can
+    // relocate it on every supported MSVC optimization level.
+    volatile int first = value + 1;
+    volatile int second = first + 1;
+    volatile int third = second + 1;
+    volatile int fourth = third + 1;
     ++g_targetCalls;
-    return result + 3;
+    return fourth - 1;
 }
 
 void SIGILHOOK_CALL codeCallback(sigilhook_call_frame* frame, void*) {
